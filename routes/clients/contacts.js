@@ -38,6 +38,11 @@ import {
   setSessionCookie,
   signSessionToken,
 } from '../../utils/authSession.js';
+import { requireRole } from '../../middleware/roles.js';
+import { validatePortalPassword, PORTAL_PASSWORD_MIN_LENGTH } from '../../utils/passwordPolicy.js';
+
+const PORTAL_PASSWORD_ERROR =
+  `Mot de passe trop faible : ${PORTAL_PASSWORD_MIN_LENGTH} caractères minimum, avec au moins une lettre et un chiffre.`;
 
 const router = express.Router();
 router.use(verifyJWT);
@@ -266,8 +271,8 @@ router.post('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
   const contactId = parseContactId(req.params.id);
   if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
   const password = String(req.body?.password || "");
-  if (password.length < 6) {
-    return res.status(400).json({ error: "Mot de passe requis (6 caractères minimum)." });
+  if (!validatePortalPassword(password).valid) {
+    return res.status(400).json({ error: PORTAL_PASSWORD_ERROR });
   }
   try {
     await assertCommunityClientPortalLimit(1);
@@ -316,8 +321,8 @@ router.patch('/:id/portal/password', verifyJWT, requireAgent, async (req, res) =
   const contactId = parseContactId(req.params.id);
   if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
   const newPassword = String(req.body?.newPassword || req.body?.password || "");
-  if (newPassword.length < 6) {
-    return res.status(400).json({ error: "Mot de passe requis (6 caractères minimum)." });
+  if (!validatePortalPassword(newPassword).valid) {
+    return res.status(400).json({ error: PORTAL_PASSWORD_ERROR });
   }
   try {
     await resetPortalPassword(contactId, newPassword);
@@ -342,7 +347,7 @@ router.delete('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
   }
 });
 
-router.post('/:id/portal/impersonate', verifyJWT, requireAgent, async (req, res) => {
+router.post('/:id/portal/impersonate', verifyJWT, requireRole('admin'), async (req, res) => {
   const contactId = parseContactId(req.params.id);
   if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
 
@@ -389,7 +394,7 @@ router.post('/:id/portal/impersonate', verifyJWT, requireAgent, async (req, res)
     setSessionCookie(req, res, clientToken);
 
     console.info(
-      `[impersonation] agent=${req.user.id} contact=${contactId} portal_user=${portalUser.id}`
+      `[impersonation][audit] ts=${new Date().toISOString()} ip=${req.ip} agent=${req.user.id} agent_email=${req.user.email} contact=${contactId} portal_user=${portalUser.id} client=${portalUser.client_id}`
     );
 
     res.json({

@@ -352,7 +352,7 @@ router.post(
         });
       }
 
-      const hash = await bcrypt.hash(password, 10);
+      const hash = await bcrypt.hash(password, 12);
       const id = randomUUID();
 
       await pool.query(

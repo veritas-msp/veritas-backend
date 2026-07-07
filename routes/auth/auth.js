@@ -1,5 +1,6 @@
 import express from "express";
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import { pool } from "../../database/db.js";
 import { sendMail } from "../../utils/sendMail.js";
 import { forgotPasswordEmailContent } from "../../utils/authEmailTemplates.js";
@@ -23,6 +24,11 @@ import {
 const router = express.Router();
 
 router.use("/mfa", mfaRoutes);
+
+/** Empreinte courte du hash courant : lie un jeton de reset à un état de mot de passe donné (anti-rejeu). */
+function passwordFingerprint(passwordHash) {
+  return crypto.createHash("sha256").update(String(passwordHash || "")).digest("hex").slice(0, 16);
+}
 
 async function getUserByEmail(email) {
   const { rows } = await pool.query(
@@ -110,8 +116,12 @@ router.post("/forgot-password", forgotPasswordRateLimit, async (req, res) => {
       return res.json({ success: true });
     }
 
-    const token = signSessionToken({ id: user.id, email: user.email, purpose: "password_reset" }, "15m");
-    const resetLink = `${getPrimaryFrontendBaseUrl()}/reset-password?token=${token}`;
+    const token = signSessionToken(
+      { id: user.id, email: user.email, purpose: "password_reset", fp: passwordFingerprint(user.password) },
+      "15m"
+    );
+    // Fragment (#) : le token n'est pas transmis au serveur, ni dans les logs/Referer.
+    const resetLink = `${getPrimaryFrontendBaseUrl()}/reset-password#token=${token}`;
 
     await sendMail({
       to: email,
@@ -146,6 +156,19 @@ router.post("/reset-password", resetPasswordRateLimit, async (req, res) => {
         error:
           "Mot de passe trop faible : 12 caractères minimum, avec majuscule, minuscule, chiffre et caractère spécial.",
       });
+    }
+
+    // Anti-rejeu : le token est lié à l'empreinte du mot de passe au moment de son émission.
+    // Après un changement de mot de passe, l'empreinte diffère → le token ne peut plus resservir.
+    const { rows: current } = await pool.query(
+      "SELECT password_hash FROM v_b_users WHERE id = $1",
+      [decoded.id]
+    );
+    if (!current[0]) {
+      return res.status(400).json({ error: "Token invalide ou expiré." });
+    }
+    if (!decoded.fp || decoded.fp !== passwordFingerprint(current[0].password_hash)) {
+      return res.status(400).json({ error: "Ce lien a déjà été utilisé ou n'est plus valide." });
     }
 
     const hashed = await bcrypt.hash(newPassword, 12);
