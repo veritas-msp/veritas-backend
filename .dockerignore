@@ -1,0 +1,11 @@
+node_modules
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+.setup-complete
+*.log
+reports/
+uploads/*
+!uploads/.gitkeep

@@ -1,0 +1,4337 @@
+// ───────────────────────────────────────────────
+// 📦 Imports principaux
+// ───────────────────────────────────────────────
+import express from 'express';
+import { pool } from '../../database/db.js';
+import { transformClientModulesToFrontend } from '../../utils/transformClientModules.js';
+import { buildEquipmentLogQuery } from '../../utils/equipmentLogs.js';
+import { checkSslCertificate, isSslCheckStale, resolveSslCheckIntervalHours } from '../../utils/sslCertificateChecker.js';
+import verifyJWT from '../../middleware/auth.js';
+import { dispatchNotificationEvent } from "../../services/notificationDispatcher.js";
+import {
+  assertCommunityClientsLimit,
+  assertCommunitySitesLimit,
+  sendCommunityLimitError,
+} from '../../utils/communityLimits.js';
+import { registerClientMetaRoutes } from './clientMeta.js';
+import {
+  attachDeletionSummary,
+  fetchDeletionSummaryByClientId,
+  getClientDeletionStatus,
+} from '../../utils/clientDeletionGuard.js';
+import {
+  createClientCustomEquipment,
+  deleteClientCustomEquipment,
+  listClientCustomEquipment,
+  listEquipmentFamilies,
+  updateClientCustomEquipment,
+} from '../../utils/equipmentFamilies.js';
+import { isCommunity } from '../../utils/edition.js';
+import { requireProForClientInfra } from '../../middleware/clientInfraRoutes.js';
+import {
+  attachEquipmentCounts,
+  fetchEquipmentCountsByClientId,
+} from '../../utils/equipmentCountsByClient.js';
+
+const router = express.Router();
+router.use(requireProForClientInfra);
+router.use(verifyJWT);
+
+function normalizeClientNumber(value) {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+}
+
+async function fetchTagsByClientId() {
+  const byClientId = {};
+
+  try {
+    const result = await pool.query(`
+      SELECT l.client_id::text AS client_id,
+             t.id,
+             t.label,
+             t.color
+      FROM v_b_client_tag_links l
+      JOIN v_b_client_tags t ON t.id = l.tag_id
+      ORDER BY t.label ASC
+    `);
+
+    for (const row of result.rows) {
+      const clientId = String(row.client_id);
+      if (!byClientId[clientId]) {
+        byClientId[clientId] = [];
+      }
+      byClientId[clientId].push({
+        id: row.id,
+        label: row.label,
+        color: row.color,
+      });
+    }
+  } catch (err) {
+    if (err.code === "42P01") {
+      console.warn("[client-tags] tables absentes, étiquettes ignorées");
+      return byClientId;
+    }
+    throw err;
+  }
+
+  return byClientId;
+}
+
+const attachClientTags = (clients, tagsByClientId = {}) =>
+  clients.map((client) => ({
+    ...client,
+    tags: tagsByClientId[String(client.id)] || [],
+  }));
+
+function pickPrimaryContactFromRows(contacts) {
+  if (!Array.isArray(contacts) || contacts.length === 0) return null;
+
+  const principal = contacts.find((contact) =>
+    String(contact.poste || "")
+      .toLowerCase()
+      .includes("principal")
+  );
+  if (principal) return principal;
+
+  const active = contacts.find((contact) => {
+    const status = String(contact.statut || "").toLowerCase();
+    return status.includes("actif") && !status.includes("inactif");
+  });
+  return active || contacts[0];
+}
+
+function formatPrimaryContactName(contact) {
+  if (!contact) return null;
+  const prenom = String(contact.prenom || "").trim();
+  const nom = String(contact.nom || "").trim();
+  if (prenom && nom) return `${prenom} ${nom}`;
+  return nom || prenom || null;
+}
+
+async function fetchPrimaryContactsByClientId() {
+  const byClientId = {};
+
+  try {
+    const result = await pool.query(`
+      SELECT client_id::text AS client_id,
+             nom,
+             prenom,
+             poste,
+             statut
+      FROM v_b_contacts
+      ORDER BY client_id ASC, nom ASC, prenom ASC
+    `);
+
+    const grouped = {};
+    for (const row of result.rows) {
+      const clientId = String(row.client_id);
+      if (!grouped[clientId]) grouped[clientId] = [];
+      grouped[clientId].push(row);
+    }
+
+    for (const [clientId, contacts] of Object.entries(grouped)) {
+      const primary = pickPrimaryContactFromRows(contacts);
+      const name = formatPrimaryContactName(primary);
+      if (name) byClientId[clientId] = name;
+    }
+  } catch (err) {
+    if (err.code === "42P01") {
+      console.warn("[client-contacts] table absente, contacts ignorés");
+      return byClientId;
+    }
+    throw err;
+  }
+
+  return byClientId;
+}
+
+const attachPrimaryContacts = (clients, primaryContactsByClientId = {}) =>
+  clients.map((client) => ({
+    ...client,
+    primaryContactName: primaryContactsByClientId[String(client.id)] || null,
+  }));
+
+const enrichClientsListPayload = async (clients) => {
+  const [countsByClientId, tagsByClientId, deletionByClientId, primaryContactsByClientId] =
+    await Promise.all([
+      fetchEquipmentCountsByClientId(),
+      fetchTagsByClientId(),
+      fetchDeletionSummaryByClientId(),
+      fetchPrimaryContactsByClientId(),
+    ]);
+  return attachDeletionSummary(
+    attachPrimaryContacts(
+      attachClientTags(attachEquipmentCounts(clients, countsByClientId), tagsByClientId),
+      primaryContactsByClientId
+    ),
+    deletionByClientId
+  );
+};
+const invalidateClientsListCache = () => {};
+
+// Mapping des tables de modules (hors flags génériques, désormais stockés dans v_b_clients.modules)
+const MODULE_TABLES = {
+  internet: "v_b_clients_m_internet",
+  servers: "v_b_clients_m_servers",
+  stockage: "v_b_clients_m_stockage",
+  firewall: "v_b_clients_m_firewall",
+  switch: "v_b_clients_m_switch",
+  wifi: "v_b_clients_m_wifi",
+  alimentation: "v_b_clients_m_alimentation",
+  routeur: "v_b_clients_m_routeur",
+  toip: "v_b_clients_m_toip",
+  save: "v_b_clients_m_save",
+  antivirus: "v_b_clients_m_antivirus",
+  antispam: "v_b_clients_m_antispam",
+  ndd: "v_b_clients_m_ndd",
+  ssl: "v_b_clients_m_ssl",
+  licences: "v_b_clients_m_licences",
+  o365: "v_b_clients_m_o365",
+  ordinateurs: "v_b_clients_m_ordinateurs",
+};
+
+async function resolveNumericClientId(id) {
+  let clientId = id;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  if (uuidRegex.test(String(id))) {
+    const clientResult = await pool.query(
+      "SELECT id FROM v_b_clients WHERE id::text = $1",
+      [id]
+    );
+    if (clientResult.rows.length === 0) return null;
+    clientId = clientResult.rows[0].id;
+  }
+
+  clientId = parseInt(clientId, 10);
+  if (Number.isNaN(clientId)) return null;
+  return clientId;
+}
+
+function mapSslCertificateRow(row) {
+  const data = row.data && typeof row.data === "object" ? row.data : {};
+  const hostname = data.hostname || data.host || row.name || row.item_key || "—";
+  const checkIntervalHours = resolveSslCheckIntervalHours(data);
+  let nextCheckAt = null;
+  if (data.lastChecked) {
+    const last = new Date(data.lastChecked);
+    if (!Number.isNaN(last.getTime())) {
+      nextCheckAt = new Date(last.getTime() + checkIntervalHours * 3600000).toISOString();
+    }
+  }
+
+  return {
+    id: row.id,
+    client_id: row.client_id,
+    item_key: row.item_key,
+    hostname,
+    port: data.port || 443,
+    subject: data.subject || null,
+    subjectCN: data.subjectCN || null,
+    subjectO: data.subjectO || null,
+    issuer: data.issuer || null,
+    issuerCN: data.issuerCN || null,
+    issuerO: data.issuerO || null,
+    expiration: data.expiration || null,
+    daysRemaining: data.daysRemaining ?? null,
+    validFrom: data.validFrom || null,
+    lastChecked: data.lastChecked || null,
+    nextCheckAt,
+    checkIntervalHours,
+    serialNumber: data.serialNumber || null,
+    fingerprint: data.fingerprint || null,
+    subjectAltNames: data.subjectAltNames || null,
+    protocol: data.protocol || null,
+    authorized: data.authorized ?? null,
+    authorizationError: data.authorizationError || null,
+    error: data.error || null,
+    valid: data.valid !== false && !data.error,
+    is_active: row.is_active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+async function checkAndPersistSslRow(row) {
+  const data = row.data && typeof row.data === "object" ? row.data : {};
+  const hostname = data.hostname || data.host || row.name || row.item_key;
+  const port = Number(data.port) || 443;
+
+  if (!hostname) return null;
+
+  let payload;
+  try {
+    payload = await checkSslCertificate(hostname, port);
+  } catch (error) {
+    payload = {
+      hostname,
+      port,
+      valid: false,
+      error: error.message || "Vérification impossible",
+      lastChecked: new Date().toISOString(),
+    };
+  }
+
+  const merged = { ...data, ...payload };
+  if (data.checkIntervalHours != null) {
+    merged.checkIntervalHours = resolveSslCheckIntervalHours(data);
+  }
+
+  const updateResult = await pool.query(
+    `UPDATE v_b_clients_m_ssl
+     SET data = $1, updated_at = NOW()
+     WHERE id = $2
+     RETURNING id, client_id, item_key, name, data, is_active, created_at, updated_at`,
+    [JSON.stringify(merged), row.id]
+  );
+
+  return updateResult.rows[0] ? mapSslCertificateRow(updateResult.rows[0]) : null;
+}
+
+function computeLicenceDaysRemaining(expiration) {
+  if (!expiration) return null;
+  const expiry = new Date(expiration);
+  if (Number.isNaN(expiry.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  expiry.setHours(0, 0, 0, 0);
+  return Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+}
+
+function mapLicenceRow(row) {
+  const data = row.data && typeof row.data === "object" ? row.data : {};
+  const nom = String(data.nom || data.name || row.name || row.item_key || "").trim();
+  const expiration = data.expiration || null;
+
+  return {
+    id: row.id,
+    client_id: row.client_id,
+    nom,
+    name: nom,
+    expiration,
+    fournisseur: data.fournisseur || data.vendor || null,
+    notes: data.notes || data.note || null,
+    daysRemaining: computeLicenceDaysRemaining(expiration),
+    is_active: row.is_active !== false,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+/** Tables cybersécurité uniquement (page Cyber — sans N× fetch /modules) */
+const CYBER_MODULE_TABLES = {
+  antivirus: "v_b_clients_m_antivirus",
+  antispam: "v_b_clients_m_antispam",
+  save: "v_b_clients_m_save",
+};
+
+function parseModuleRowForCyber(row, table) {
+  let parsedData = row.data;
+  if (row.data && typeof row.data === "string") {
+    try {
+      parsedData = JSON.parse(row.data);
+    } catch {
+      parsedData = {};
+    }
+  } else if (!row.data) {
+    parsedData = {};
+  }
+
+  const baseRow = {
+    id: row.id,
+    item_key: row.item_key,
+    name: row.name,
+    is_active: row.is_active,
+    data: parsedData,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    checkmk_host_name: row.checkmk_host_name ?? null,
+    checkmk_site: row.checkmk_site ?? null,
+    checkmk_service_name: row.checkmk_service_name ?? null,
+  };
+  if (table === "v_b_clients_m_save") {
+    const rawDate = row.last_backup_date;
+    baseRow.last_backup_date =
+      rawDate != null
+        ? rawDate instanceof Date
+          ? rawDate.toISOString()
+          : String(rawDate)
+        : null;
+    baseRow.last_backup_duration =
+      row.last_backup_duration != null ? String(row.last_backup_duration) : null;
+    const rawStart = row.last_backup_start;
+    baseRow.last_backup_start =
+      rawStart != null
+        ? rawStart instanceof Date
+          ? rawStart.toISOString()
+          : String(rawStart)
+        : null;
+  }
+  return baseRow;
+}
+
+async function queryCyberFamilyRows(pool, table, clientIds) {
+  if (!clientIds.length) return [];
+  const baseSelect = `SELECT client_id, id, item_key, name, data, is_active, created_at, updated_at, checkmk_host_name, checkmk_site, checkmk_service_name`;
+  const saveExtraSelect =
+    table === "v_b_clients_m_save" ? ", last_backup_date, last_backup_duration, last_backup_start" : "";
+  try {
+    const result = await pool.query(
+      `${baseSelect}${saveExtraSelect}
+       FROM ${table}
+       WHERE client_id = ANY($1::int[])
+       ORDER BY client_id, name NULLS LAST, item_key NULLS LAST`,
+      [clientIds]
+    );
+    return result.rows;
+  } catch (colErr) {
+    if (colErr.code === "42703") {
+      const result = await pool.query(
+        `SELECT client_id, id, item_key, name, data, is_active, created_at, updated_at
+         FROM ${table}
+         WHERE client_id = ANY($1::int[])
+         ORDER BY client_id, name NULLS LAST, item_key NULLS LAST`,
+        [clientIds]
+      );
+      result.rows.forEach((r) => {
+        r.checkmk_host_name = null;
+        r.checkmk_site = null;
+        r.checkmk_service_name = null;
+        if (table === "v_b_clients_m_save") {
+          r.last_backup_date = null;
+          r.last_backup_duration = null;
+          r.last_backup_start = null;
+        }
+      });
+      return result.rows;
+    }
+    if (colErr.code === "42P01") {
+      return [];
+    }
+    throw colErr;
+  }
+}
+
+const getFieldNameFromUpdate = (field) => {
+  if (!field) return null;
+  return field.split('=')[0].trim();
+};
+
+const buildChanges = (modifiedFields, valueMap) =>
+  modifiedFields.map((field) => ({
+    field,
+    newValue: valueMap[field] !== undefined ? valueMap[field] : null,
+  }));
+
+async function getClientSnapshotForNotification(clientId) {
+  const preferredColumns = [
+    "id",
+    "name",
+    "client_number",
+    "email",
+    "phone",
+    "address",
+    "siret",
+    "secteur",
+    "commercial_id",
+    "contrat",
+    "options",
+    "modules",
+    "sites",
+    "office365_data",
+  ];
+  try {
+    const result = await pool.query(
+      `SELECT ${preferredColumns.join(", ")}
+       FROM v_b_clients
+       WHERE id::text = $1
+       LIMIT 1`,
+      [String(clientId || "")]
+    );
+    return result.rows?.[0] || null;
+  } catch (error) {
+    if (error?.code !== "42703") throw error;
+    const columnsResult = await pool.query(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'v_b_clients'`
+    );
+    const availableColumns = new Set(columnsResult.rows.map((row) => String(row.column_name || "").trim()));
+    const selectedColumns = preferredColumns.filter((column) => availableColumns.has(column));
+    if (!selectedColumns.includes("id")) {
+      selectedColumns.unshift("id");
+    }
+    const safeResult = await pool.query(
+      `SELECT ${selectedColumns.join(", ")}
+       FROM v_b_clients
+       WHERE id::text = $1
+       LIMIT 1`,
+      [String(clientId || "")]
+    );
+    return safeResult.rows?.[0] || null;
+  }
+}
+
+function stringifyComparable(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch (_error) {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function buildNotificationChanges(previousSnapshot = {}, changedFields = [], nextValueMap = {}) {
+  const changes = [];
+  for (const field of changedFields) {
+    const oldValue = previousSnapshot?.[field] ?? null;
+    const newValue = nextValueMap?.[field] ?? null;
+    if (stringifyComparable(oldValue) === stringifyComparable(newValue)) continue;
+    changes.push({
+      field,
+      oldValue,
+      newValue,
+    });
+  }
+  return changes;
+}
+
+let clientsColumnsCache = null;
+async function getClientsAvailableColumns() {
+  if (clientsColumnsCache instanceof Set && clientsColumnsCache.size > 0) {
+    return clientsColumnsCache;
+  }
+  const columnsResult = await pool.query(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'v_b_clients'`
+  );
+  clientsColumnsCache = new Set(columnsResult.rows.map((row) => String(row.column_name || "").trim()));
+  return clientsColumnsCache;
+}
+
+function resolveClientSsidColumn(hasClientColumn) {
+  if (hasClientColumn("ssid")) return "ssid";
+  if (hasClientColumn("ssids")) return "ssids";
+  return null;
+}
+
+function appendClientSsidUpdate({
+  ssid,
+  ssids,
+  hasClientColumn,
+  updateFields,
+  updateValues,
+  paramIndex,
+}) {
+  if (ssid === undefined && ssids === undefined) return paramIndex;
+  const column = resolveClientSsidColumn(hasClientColumn);
+  if (!column) return paramIndex;
+  const payload = ssids !== undefined ? ssids : ssid;
+  updateFields.push(`${column} = $${paramIndex}`);
+  updateValues.push(JSON.stringify(Array.isArray(payload) ? payload : []));
+  return paramIndex + 1;
+}
+
+const CLIENTS_LIST_SELECT_COLUMNS = [
+  "id",
+  "name",
+  "client_number",
+  "address",
+  "siret",
+  "secteur",
+  "contrat",
+  "options",
+  "modules",
+  "commercial_id",
+  "created_at",
+  "updated_at",
+];
+
+async function queryClientsListBaseRows() {
+  const available = await getClientsAvailableColumns();
+  const clientCols = CLIENTS_LIST_SELECT_COLUMNS.filter((col) => available.has(col));
+  if (!clientCols.includes("id")) {
+    clientCols.unshift("id");
+  }
+  const selectList = clientCols.map((col) => `c.${col}`).join(",\n        ");
+
+  return pool.query(`
+      SELECT
+        ${selectList},
+        u.username,
+        u.email AS user_email,
+        (SELECT EXISTS (SELECT 1 FROM v_b_clients_azure a WHERE a.client_id = c.id)) AS has_azure_credentials,
+        (SELECT EXISTS (
+          SELECT 1 FROM v_b_clients_m_o365 o WHERE o.client_id = c.id
+        )) AS has_o365_equipment,
+        (SELECT EXISTS (
+          SELECT 1 FROM v_b_clients_m_ndd n WHERE n.client_id = c.id
+        )) AS has_ndd_equipment
+      FROM v_b_clients c
+      LEFT JOIN v_b_users u ON c.commercial_id::text = u.id::text
+      ORDER BY c.name ASC
+    `);
+}
+
+function mapClientsListRow(row) {
+  const {
+    has_azure_credentials: hasAzureCredentials,
+    has_o365_equipment: hasO365Equipment,
+    has_ndd_equipment: hasNddEquipment,
+    ...client
+  } = row;
+  let options = client.options || {};
+  if (typeof options === "string") {
+    try {
+      options = JSON.parse(options);
+    } catch {
+      options = {};
+    }
+  }
+
+  let contrat = client.contrat || {};
+  if (typeof contrat === "string") {
+    try {
+      contrat = JSON.parse(contrat);
+    } catch {
+      contrat = {};
+    }
+  }
+
+  let modules = client.modules || {};
+  if (typeof modules === "string") {
+    try {
+      modules = JSON.parse(modules);
+    } catch {
+      modules = {};
+    }
+  }
+  if (!modules || typeof modules !== "object") {
+    modules = {};
+  }
+
+  if (hasAzureCredentials || hasO365Equipment) {
+    modules = { ...modules, Office365: true };
+  }
+  if (hasNddEquipment) {
+    modules = { ...modules, NDD: true };
+  }
+
+  return {
+    ...client,
+    client_number: client.client_number ?? null,
+    options,
+    contrat,
+    modules,
+    email: null,
+    phone: null,
+    sites: [],
+    commercial: client.username || client.user_email || null,
+  };
+}
+
+async function logClientUpdate({ req, updateFields, valueMap }) {
+  try {
+    // Déterminer si l'id est un UUID ou un ID numérique
+    let clientId = req.params.id;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (uuidRegex.test(req.params.id)) {
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [req.params.id]
+      );
+      if (clientResult.rows.length > 0) {
+        clientId = clientResult.rows[0].id;
+        console.log(`🔄 PUT général logs: Conversion UUID ${req.params.id} → ID numérique ${clientId}`);
+      }
+    }
+
+    if (isNaN(parseInt(clientId))) {
+      console.error(`❌ PUT général logs: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
+      return;
+    }
+
+    const rawUserId = req.user?.id || req.user?.user_id || null;
+    const uuidRegexUser = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const userId = rawUserId && uuidRegexUser.test(String(rawUserId)) ? String(rawUserId) : null;
+
+    const modifiedFields = updateFields
+      .map(getFieldNameFromUpdate)
+      .filter(Boolean)
+      .filter(field => field !== 'updated_at');
+
+    const action = 'Modification du client';
+
+    const details = {
+      modifiedFields,
+      changes: buildChanges(modifiedFields, valueMap),
+    };
+
+    await pool.query(
+      `INSERT INTO v_b_clients_logs
+       (client_id, user_id, action, details)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        clientId,
+        userId,
+        action,
+        JSON.stringify(details),
+      ]
+    );
+  } catch (logError) {
+    console.warn('Erreur lors de l\'enregistrement du log:', logError);
+  }
+}
+
+// ───────────────────────────────────────────────
+// 📥 GET / — Liste des clients (monitoring)
+// ───────────────────────────────────────────────
+router.get('/', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT c.*, u.username, u.email as user_email
+      FROM v_b_clients c
+      LEFT JOIN v_b_users u ON c.commercial_id::text = u.id::text
+    `);
+
+    // Transformer les données pour inclure le nom commercial
+    const clientsWithCommercial = result.rows.map(client => ({
+      ...client,
+      commercial: client.username || client.user_email || null
+    }));
+
+    res.json(clientsWithCommercial);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📥 GET /list — Liste clients ultra légère (EnterprisePage)
+// ───────────────────────────────────────────────
+router.get('/list', async (req, res) => {
+  try {
+    const result = await queryClientsListBaseRows();
+    const payload = result.rows.map(mapClientsListRow);
+    const enriched = await enrichClientsListPayload(payload);
+    res.set('Cache-Control', 'no-store');
+    return res.json(enriched);
+  } catch (err) {
+    console.error("[GET /clients/list]", err.message, err.code || "");
+    return res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📥 GET /equipment-counts — Comptage matériel brut (COUNT(*) par table m_*)
+// ───────────────────────────────────────────────
+router.get("/equipment-counts", async (req, res) => {
+  try {
+    const byClientId = await fetchEquipmentCountsByClientId();
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.set("Pragma", "no-cache");
+    return res.json({ byClientId });
+  } catch (err) {
+    console.error("[GET /equipment-counts]", err);
+    return res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📥 GET /cyber-page-data — Page Cybersécurité : campagnes + antivirus / antispam / sauvegarde (vues m_*)
+// Sans N appels GET /:id/modules ni enrichissement modules_monitoring inutile.
+// ───────────────────────────────────────────────
+router.get("/cyber-page-data", verifyJWT, async (req, res) => {
+  try {
+    const clientsResult = await pool.query(`
+      SELECT
+        c.id,
+        c.name,
+        c.client_number,
+        c.address,
+        c.siret,
+        c.secteur,
+        c.contrat,
+        c.options,
+        c.modules,
+        c.commercial_id,
+        c.created_at,
+        c.updated_at,
+        u.username,
+        u.email AS user_email,
+        (SELECT EXISTS (SELECT 1 FROM v_b_clients_azure a WHERE a.client_id = c.id)) AS has_azure_credentials,
+        (SELECT EXISTS (
+          SELECT 1 FROM v_b_clients_m_o365 o WHERE o.client_id = c.id
+        )) AS has_o365_equipment,
+        (SELECT EXISTS (
+          SELECT 1 FROM v_b_clients_m_ndd n WHERE n.client_id = c.id
+        )) AS has_ndd_equipment
+      FROM v_b_clients c
+      LEFT JOIN v_b_users u ON c.commercial_id::text = u.id::text
+      ORDER BY c.name ASC
+    `);
+
+    const clientIds = clientsResult.rows.map((r) => r.id).filter((id) => id != null);
+
+    const [avRows, asRows, svRows, campaignsResult] = await Promise.all([
+      queryCyberFamilyRows(pool, CYBER_MODULE_TABLES.antivirus, clientIds),
+      queryCyberFamilyRows(pool, CYBER_MODULE_TABLES.antispam, clientIds),
+      queryCyberFamilyRows(pool, CYBER_MODULE_TABLES.save, clientIds),
+      pool
+        .query(
+          `
+      SELECT
+        c.id, c.client_id, c.name, c.type, c.status, c.start_date, c.end_date,
+        c.global_progress, c.description, c.objectif_adoption, c.created_at, c.updated_at, c.created_by,
+        c.updated_by,
+        cl.name as client_name
+      FROM v_b_clients_c_campaign c
+      LEFT JOIN v_b_clients cl ON c.client_id::text = cl.id::text
+      ORDER BY c.created_at DESC
+    `
+        )
+        .catch((e) => {
+          if (e.code === "42P01") return { rows: [] };
+          throw e;
+        }),
+    ]);
+
+    const rowsByClient = new Map();
+    for (const id of clientIds) {
+      rowsByClient.set(Number(id), {
+        antivirus: [],
+        antispam: [],
+        save: [],
+      });
+    }
+    const pushRows = (rows, family, table) => {
+      for (const row of rows) {
+        const cid = Number(row.client_id);
+        if (!rowsByClient.has(cid)) {
+          rowsByClient.set(cid, { antivirus: [], antispam: [], save: [] });
+        }
+        rowsByClient.get(cid)[family].push(parseModuleRowForCyber(row, table));
+      }
+    };
+    pushRows(avRows, "antivirus", CYBER_MODULE_TABLES.antivirus);
+    pushRows(asRows, "antispam", CYBER_MODULE_TABLES.antispam);
+    pushRows(svRows, "save", CYBER_MODULE_TABLES.save);
+
+    const azureByClient = new Map();
+    if (clientIds.length) {
+      try {
+        const az = await pool.query(
+          `SELECT DISTINCT client_id FROM v_b_clients_azure WHERE client_id = ANY($1::int[])`,
+          [clientIds]
+        );
+        az.rows.forEach((r) => azureByClient.set(Number(r.client_id), true));
+      } catch {
+        // ignore
+      }
+    }
+
+    const clientsPayload = clientsResult.rows.map((row) => {
+      const {
+        has_azure_credentials: hasAzureCredentials,
+        has_o365_equipment: hasO365Equipment,
+        has_ndd_equipment: hasNddEquipment,
+        ...client
+      } = row;
+      let options = client.options || {};
+      if (typeof options === "string") {
+        try {
+          options = JSON.parse(options);
+        } catch {
+          options = {};
+        }
+      }
+      let contrat = client.contrat || {};
+      if (typeof contrat === "string") {
+        try {
+          contrat = JSON.parse(contrat);
+        } catch {
+          contrat = {};
+        }
+      }
+      let modules = client.modules || {};
+      if (typeof modules === "string") {
+        try {
+          modules = JSON.parse(modules);
+        } catch {
+          modules = {};
+        }
+      }
+      if (!modules || typeof modules !== "object") {
+        modules = {};
+      }
+      if (hasAzureCredentials || hasO365Equipment) {
+        modules = { ...modules, Office365: true };
+      }
+      if (hasNddEquipment) {
+        modules = { ...modules, NDD: true };
+      }
+
+      const cid = Number(client.id);
+      const raw = rowsByClient.get(cid) || { antivirus: [], antispam: [], save: [] };
+      const azureHasCredentials = !!azureByClient.get(cid);
+      const transformed = transformClientModulesToFrontend(
+        {
+          antivirus: raw.antivirus,
+          antispam: raw.antispam,
+          save: raw.save,
+        },
+        { azureHasCredentials }
+      );
+
+      return {
+        ...client,
+        options,
+        contrat,
+        modules,
+        email: null,
+        phone: null,
+        sites: [],
+        commercial: client.username || client.user_email || null,
+        equipements: transformed.equipements || {},
+        modules_monitoring: {},
+      };
+    });
+
+    res.json({
+      clients: clientsPayload,
+      campaigns: campaignsResult.rows || [],
+    });
+  } catch (err) {
+    console.error("Erreur GET /cyber-page-data:", err);
+    res.status(500).json({
+      error: "Erreur lors du chargement des données cybersécurité",
+      details: err.message,
+      code: err.code,
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📥 GET /general — Liste des clients généraux (avec modules depuis nouvelles tables)
+// ───────────────────────────────────────────────
+router.get('/general', async (req, res) => {
+  try {
+    const clientsResult = await pool.query(`
+      SELECT c.*, u.username, u.email as user_email
+      FROM v_b_clients c
+      LEFT JOIN v_b_users u ON c.commercial_id::text = u.id::text
+      ORDER BY c.name
+    `);
+    const clients = clientsResult.rows;
+
+    const clientsWithModules = await Promise.all(
+      clients.map(async (client) => {
+        let equipements = {};
+        if (!isCommunity()) {
+          try {
+            const rawModulesData = {};
+            for (const [family, table] of Object.entries(MODULE_TABLES)) {
+              try {
+                let result;
+                const baseSelect = `SELECT id, item_key, name, data, is_active, created_at, updated_at, checkmk_host_name, checkmk_site, checkmk_service_name`;
+                const saveExtraSelect = table === 'v_b_clients_m_save' ? ', last_backup_date, last_backup_duration, last_backup_start' : '';
+                try {
+                  result = await pool.query(
+                    `${baseSelect}${saveExtraSelect}
+                     FROM ${table}
+                     WHERE client_id = $1
+                     ORDER BY name NULLS LAST, item_key NULLS LAST`,
+                    [client.id]
+                  );
+                } catch (colErr) {
+                  if (colErr.code === '42703') {
+                    result = await pool.query(
+                      `SELECT id, item_key, name, data, is_active, created_at, updated_at
+                       FROM ${table}
+                       WHERE client_id = $1
+                       ORDER BY name NULLS LAST, item_key NULLS LAST`,
+                      [client.id]
+                    );
+                    result.rows.forEach(r => {
+                      r.checkmk_host_name = null;
+                      r.checkmk_site = null;
+                      r.checkmk_service_name = null;
+                      if (table === 'v_b_clients_m_save') {
+                        r.last_backup_date = null;
+                        r.last_backup_duration = null;
+                        r.last_backup_start = null;
+                      }
+                    });
+                  } else throw colErr;
+                }
+
+                const parsedRows = result.rows.map(row => {
+                  if (row.data && typeof row.data === 'string') {
+                    try {
+                      row.data = JSON.parse(row.data);
+                    } catch (e) {
+                      row.data = {};
+                    }
+                  } else if (!row.data) {
+                    row.data = {};
+                  }
+                  return row;
+                });
+
+                rawModulesData[family] = parsedRows;
+              } catch (err) {
+                if (err.code === '42P01') {
+                  rawModulesData[family] = [];
+                } else {
+                  throw err;
+                }
+              }
+            }
+
+            let azureHasCredentials = false;
+            try {
+              const azureResult = await pool.query(
+                "SELECT 1 FROM v_b_clients_azure WHERE client_id = $1 LIMIT 1",
+                [client.id]
+              );
+              azureHasCredentials = azureResult.rows.length > 0;
+            } catch (azureErr) {
+            }
+
+            const transformed = transformClientModulesToFrontend(rawModulesData, { azureHasCredentials });
+            equipements = transformed.equipements || {};
+          } catch (error) {
+            return client;
+          }
+        }
+
+        try {
+          let parsedSites = client.sites;
+          if (parsedSites && typeof parsedSites === 'string') {
+            try {
+              parsedSites = JSON.parse(parsedSites);
+            } catch (e) {
+              parsedSites = [];
+            }
+          }
+
+          let parsedSSID = client.ssid || client.ssids;
+          if (parsedSSID && typeof parsedSSID === 'string') {
+            try {
+              parsedSSID = JSON.parse(parsedSSID);
+            } catch (e) {
+              parsedSSID = [];
+            }
+          }
+
+          let clientOptions = client.options || {};
+          if (clientOptions && typeof clientOptions === 'string') {
+            try {
+              clientOptions = JSON.parse(clientOptions);
+            } catch (e) {
+              clientOptions = {};
+            }
+          }
+
+          let clientModulesMonitoring = isCommunity() ? {} : (client.modules || {});
+          if (!isCommunity() && clientModulesMonitoring && typeof clientModulesMonitoring === 'string') {
+            try {
+              clientModulesMonitoring = JSON.parse(clientModulesMonitoring);
+            } catch (e) {
+              clientModulesMonitoring = {};
+            }
+          }
+
+          let contratData = client.contrat;
+          if (contratData && typeof contratData === 'string') {
+            try {
+              contratData = JSON.parse(contratData);
+            } catch (e) {
+              contratData = {};
+            }
+          }
+          const commercial = client.username || client.user_email || null;
+
+          return {
+            ...client,
+            commercial,
+            options: clientOptions,
+            modules: clientOptions,
+            modules_monitoring: clientModulesMonitoring || {},
+            equipements,
+            sites: parsedSites || [],
+            ssid: parsedSSID || [],
+            ssids: parsedSSID || [],
+            contrat: contratData,
+          };
+        } catch (error) {
+          return client;
+        }
+      })
+    );
+
+    res.json(clientsWithModules);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📦 GET /:id/modules — Récupérer modules/équipements éclatés (nouvelles tables)
+// ───────────────────────────────────────────────
+router.get('/:id/modules', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const payload = {};
+    
+    // Récupérer TOUS les équipements directement depuis les tables SQL
+    for (const [family, table] of Object.entries(MODULE_TABLES)) {
+      try {
+        let result;
+        const baseSelect = `SELECT id, item_key, name, data, is_active, created_at, updated_at, checkmk_host_name, checkmk_site, checkmk_service_name`;
+        const saveExtraSelect = table === 'v_b_clients_m_save' ? ', last_backup_date, last_backup_duration, last_backup_start' : '';
+        try {
+          result = await pool.query(
+            `${baseSelect}${saveExtraSelect}
+             FROM ${table}
+             WHERE client_id = $1
+             ORDER BY name NULLS LAST, item_key NULLS LAST`,
+            [id]
+          );
+        } catch (colErr) {
+          if (colErr.code === '42703') {
+            result = await pool.query(
+              `SELECT id, item_key, name, data, is_active, created_at, updated_at
+               FROM ${table}
+               WHERE client_id = $1
+               ORDER BY name NULLS LAST, item_key NULLS LAST`,
+              [id]
+            );
+            result.rows.forEach(r => {
+              r.checkmk_host_name = null;
+              r.checkmk_site = null;
+              r.checkmk_service_name = null;
+              if (table === 'v_b_clients_m_save') {
+                r.last_backup_date = null;
+                r.last_backup_duration = null;
+                r.last_backup_start = null;
+              }
+            });
+          } else throw colErr;
+        }
+        
+        // Parser data si c'est une string
+        const parsedRows = result.rows.map(row => {
+          let parsedData = row.data;
+          if (row.data && typeof row.data === 'string') {
+            try {
+              parsedData = JSON.parse(row.data);
+            } catch (e) {
+              parsedData = {};
+            }
+          } else if (!row.data) {
+            parsedData = {};
+          }
+          
+          const baseRow = {
+            id: row.id,
+            item_key: row.item_key,
+            name: row.name,
+            is_active: row.is_active,
+            data: parsedData,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            checkmk_host_name: row.checkmk_host_name ?? null,
+            checkmk_site: row.checkmk_site ?? null,
+            checkmk_service_name: row.checkmk_service_name ?? null
+          };
+          if (table === 'v_b_clients_m_save') {
+            const rawDate = row.last_backup_date;
+            baseRow.last_backup_date = rawDate != null
+              ? (rawDate instanceof Date ? rawDate.toISOString() : String(rawDate))
+              : null;
+            baseRow.last_backup_duration = row.last_backup_duration != null ? String(row.last_backup_duration) : null;
+            const rawStart = row.last_backup_start;
+            baseRow.last_backup_start = rawStart != null
+              ? (rawStart instanceof Date ? rawStart.toISOString() : String(rawStart))
+              : null;
+          }
+          return baseRow;
+        });
+        
+        payload[family] = parsedRows;
+      } catch (err) {
+        if (err.code === '42P01') {
+          // Table n'existe pas
+          payload[family] = [];
+        } else {
+          console.error(`Erreur pour ${family}:`, err);
+          payload[family] = [];
+        }
+      }
+    }
+
+    // Azure credentials
+    let azureHasCredentials = false;
+    try {
+      const azureResult = await pool.query(
+        "SELECT 1 FROM v_b_clients_azure WHERE client_id = $1 LIMIT 1",
+        [id]
+      );
+      azureHasCredentials = azureResult.rows.length > 0;
+    } catch (azureErr) {
+      azureHasCredentials = false;
+    }
+
+    // Transformer avec la fonction standard
+    const transformed = transformClientModulesToFrontend(payload, { 
+      azureHasCredentials 
+    });
+    
+    res.json({
+      modules: transformed.modules || {},
+      modules_monitoring: transformed.modules_monitoring || {},
+      equipements: transformed.equipements || {},
+      azureHasCredentials
+    });
+  } catch (err) {
+    console.error('Erreur /:id/modules:', err);
+    res.status(500).json({ error: "Erreur lors du chargement des modules", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📥 GET /general/:id — Récupération d'un client par ID
+// ───────────────────────────────────────────────
+router.get('/general/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(`
+      SELECT c.*, u.username, u.email as user_email
+      FROM v_b_clients c
+      LEFT JOIN v_b_users u ON c.commercial_id::text = u.id::text
+      WHERE c.id = $1
+    `, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const client = result.rows[0];
+    
+    if (client.sites) {
+      if (typeof client.sites === 'string') {
+        try {
+          client.sites = JSON.parse(client.sites);
+        } catch (e) {
+          client.sites = [];
+        }
+      }
+    } else {
+      client.sites = [];
+    }
+    
+    if (client.ssids) {
+      if (typeof client.ssids === 'string') {
+        try {
+          client.ssids = JSON.parse(client.ssids);
+        } catch (e) {
+          client.ssids = [];
+        }
+      }
+    } else if (client.ssid) {
+      if (typeof client.ssid === 'string') {
+        try {
+          client.ssids = JSON.parse(client.ssid);
+        } catch (e) {
+          client.ssids = [];
+        }
+      } else if (Array.isArray(client.ssid)) {
+        client.ssids = client.ssid;
+      } else {
+        client.ssids = [];
+      }
+    } else {
+      client.ssids = [];
+    }
+
+    // Définir le nom commercial depuis les données de jointure
+    client.commercial = client.username || client.user_email || null;
+
+    res.json(client);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📝 POST /:id/logs — Créer un log manuel pour un client
+// ───────────────────────────────────────────────
+router.post('/:id/logs', verifyJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, details } = req.body;
+
+    if (!action) {
+      return res.status(400).json({ error: 'Le champ action est requis' });
+    }
+
+    // Déterminer si l'id est un UUID ou un ID numérique
+    // Si c'est un UUID, récupérer l'ID numérique du client
+    let clientId = id;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (uuidRegex.test(id)) {
+      // C'est un UUID, récupérer l'ID numérique
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [id]
+      );
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Client introuvable' });
+      }
+      clientId = clientResult.rows[0].id;
+      console.log(`🔄 POST logs: Conversion UUID ${id} → ID numérique ${clientId}`);
+    }
+
+    // Vérifier que clientId est bien un nombre
+    if (isNaN(parseInt(clientId))) {
+      console.error(`❌ POST logs: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
+      return res.status(400).json({ error: 'ID client invalide' });
+    }
+
+    // Récupérer l'utilisateur connecté (ID numérique seulement)
+    const rawUserId = req.user?.id || req.user?.user_id || null;
+    const uuidRegexUser = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const userId = rawUserId && uuidRegexUser.test(String(rawUserId)) ? String(rawUserId) : null;
+
+    // Insérer le log
+    await pool.query(
+      `INSERT INTO v_b_clients_logs
+       (client_id, user_id, action, details)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        clientId,
+        userId,
+        action,
+        JSON.stringify(details || {})
+      ]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Erreur lors de la création du log:', error);
+    res.status(500).json({ error: 'Erreur lors de la création du log' });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📥 GET /:id/logs — Récupération des logs d'un client
+// ───────────────────────────────────────────────
+router.get('/:id/logs', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Déterminer si l'id est un UUID ou un ID numérique
+    let clientId = id;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (uuidRegex.test(id)) {
+      // C'est un UUID, récupérer l'ID numérique
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [id]
+      );
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Client introuvable' });
+      }
+      clientId = clientResult.rows[0].id;
+      console.log(`🔄 GET logs: Conversion UUID ${id} → ID numérique ${clientId}`);
+    }
+
+    // Vérifier que clientId est bien un nombre pour les logs
+    if (isNaN(parseInt(clientId))) {
+      console.error(`❌ GET logs: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
+      return res.status(400).json({ error: 'ID client invalide' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+        l.id,
+        l.client_id,
+        l.user_id,
+        COALESCE(u.username, u.email) AS user_name,
+        l.action,
+        l.details,
+        l.created_at
+       FROM v_b_clients_logs l
+       LEFT JOIN v_b_users u ON l.user_id::text = u.id::text
+       WHERE l.client_id = $1
+       ORDER BY l.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [clientId, limit, offset]
+    );
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) as total
+       FROM v_b_clients_logs
+       WHERE client_id = $1`,
+      [clientId]
+    );
+
+    const total = parseInt(countResult.rows[0].total) || 0;
+
+    res.json({
+      logs: result.rows,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit)
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des logs du client:', err);
+    res.status(500).json({ error: "Erreur lors de la récupération des logs", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🛡️ GET /:id/antivirus — Récupération des données antivirus d'un client
+// ───────────────────────────────────────────────
+router.get('/:id/antivirus', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Déterminer si l'id est un UUID ou un ID numérique
+    let clientId = id;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (uuidRegex.test(id)) {
+      // C'est un UUID, récupérer l'ID numérique
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [id]
+      );
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Client introuvable' });
+      }
+      clientId = clientResult.rows[0].id;
+      console.log(`🔄 GET antivirus: Conversion UUID ${id} → ID numérique ${clientId}`);
+    }
+
+    // Vérifier que clientId est bien un nombre
+    if (isNaN(parseInt(clientId))) {
+      console.error(`❌ GET antivirus: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
+      return res.status(400).json({ error: 'ID client invalide' });
+    }
+
+    // Récupérer les données antivirus du client
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, data, created_at, updated_at
+       FROM v_b_clients_m_antivirus
+       WHERE client_id = $1
+       ORDER BY created_at DESC`,
+      [clientId]
+    );
+
+    // Transformer les données JSON de la colonne 'data' selon la vraie structure
+    const antivirusData = result.rows.map(row => {
+      const data = row.data || {};
+
+      return {
+        id: row.id,
+        client_id: row.client_id,
+        item_key: row.item_key,
+        // Mapping selon la vraie structure JSON de v_b_clients_m_antivirus
+        nom: data.solution || data.nom || data.name || 'N/A',
+        solution: data.solution || data.nom || data.name || 'N/A',
+        utilisateurs: data.licencesUtilisees || data.syncData?.license?.usedLicenses || 'N/A',
+        nombre_utilisateurs: data.licencesUtilisees || data.syncData?.license?.usedLicenses || 'N/A',
+        licences: data.licencesTotales || data.syncData?.license?.totalLicenses || 'N/A',
+        nombre_licences: data.licencesTotales || data.syncData?.license?.totalLicenses || 'N/A',
+        expiration: data.expiration || data.syncData?.license?.expirationDate || null,
+        expirityDate: data.expiration || data.syncData?.license?.expirationDate || null,
+        // Informations supplémentaires disponibles
+        endpointsTotal: data.endpoints?.total || data.syncData?.endpoints?.total || 'N/A',
+        endpointsManaged: data.endpoints?.managed || data.syncData?.endpoints?.managed || 'N/A',
+        companyName: data.companyName || data.syncData?.company?.name || 'N/A',
+        companyId: data.companyId || data.syncData?.company?.id || null,
+        mappingMode: data.mappingMode || 'reseller',
+        bitdefenderTenantId: data.bitdefenderTenantId || null,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      };
+    });
+
+    res.json(antivirusData);
+  } catch (err) {
+    console.error('Erreur lors de la récupération des données antivirus du client:', err);
+    res.status(500).json({
+      error: "Erreur lors de la récupération des données antivirus",
+      details: err.message,
+      code: err.code
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// ☁️ GET /:id/o365 — Récupération des données Microsoft 365 d'un client
+//    (snapshots enregistrés dans v_b_clients_m_o365)
+// ───────────────────────────────────────────────
+router.get('/:id/o365', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Déterminer si l'id est un UUID ou un ID numérique
+    let clientId = id;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (uuidRegex.test(id)) {
+      // C'est un UUID, récupérer l'ID numérique
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [id]
+      );
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Client introuvable' });
+      }
+      clientId = clientResult.rows[0].id;
+      console.log(`🔄 GET o365: Conversion UUID ${id} → ID numérique ${clientId}`);
+    }
+
+    // Vérifier que clientId est bien un nombre
+    if (isNaN(parseInt(clientId))) {
+      console.error(`❌ GET o365: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
+      return res.status(400).json({ success: false, error: 'ID client invalide' });
+    }
+
+    // Récupérer les snapshots Microsoft 365 pour ce client
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+       FROM v_b_clients_m_o365
+       WHERE client_id = $1
+       ORDER BY updated_at DESC, created_at DESC`,
+      [clientId]
+    );
+
+    // S'assurer que la colonne data est bien un objet JSON
+    const rows = result.rows.map(row => {
+      let parsedData = row.data;
+      if (parsedData && typeof parsedData === 'string') {
+        try {
+          parsedData = JSON.parse(parsedData);
+        } catch (e) {
+          parsedData = {};
+        }
+      } else if (!parsedData) {
+        parsedData = {};
+      }
+
+      return {
+        ...row,
+        data: parsedData,
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: rows,
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des données Office 365 du client:', err);
+    return res.status(500).json({
+      success: false,
+      error: "Erreur lors de la récupération des données Office 365",
+      details: err.message,
+      code: err.code,
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📧 GET /:id/antispam — Récupération des données antispam d'un client
+// ───────────────────────────────────────────────
+router.get('/:id/antispam', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Déterminer si l'id est un UUID ou un ID numérique
+    let clientId = id;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (uuidRegex.test(id)) {
+      // C'est un UUID, récupérer l'ID numérique
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [id]
+      );
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Client introuvable' });
+      }
+      clientId = clientResult.rows[0].id;
+      console.log(`🔄 GET antispam: Conversion UUID ${id} → ID numérique ${clientId}`);
+    }
+
+    // Vérifier que clientId est bien un nombre
+    if (isNaN(parseInt(clientId))) {
+      console.error(`❌ GET antispam: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
+      return res.status(400).json({ error: 'ID client invalide' });
+    }
+
+    // Récupérer les données antispam du client
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, data, created_at, updated_at
+       FROM v_b_clients_m_antispam
+       WHERE client_id = $1
+       ORDER BY created_at DESC`,
+      [clientId]
+    );
+
+    // Transformer les données JSON de la colonne 'data' selon la structure fournie
+    const antispamData = result.rows.map(row => {
+      const data = row.data || {};
+
+      return {
+        id: row.id,
+        client_id: row.client_id,
+        item_key: row.item_key,
+        // Mapping selon la structure JSON (logiciel, expiration, domainesSurveilles, utilisateursProteges)
+        nom: data.logiciel || data.nom || data.name || data.solution || 'N/A',
+        solution: data.logiciel || data.nom || data.name || data.solution || 'N/A',
+        utilisateurs: data.utilisateursProteges || data.utilisateurs || data.nombre_utilisateurs || 'N/A',
+        nombre_utilisateurs: data.utilisateursProteges || data.utilisateurs || data.nombre_utilisateurs || 'N/A',
+        licences: data.domainesSurveilles || data.licences || data.nombre_licences || 'N/A',
+        nombre_licences: data.domainesSurveilles || data.licences || data.nombre_licences || 'N/A',
+        expiration: data.expiration || data.expirityDate || null,
+        expirityDate: data.expiration || data.expirityDate || null,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      };
+    });
+
+    res.json(antispamData);
+  } catch (err) {
+    console.error('Erreur lors de la récupération des données antispam du client:', err);
+    res.status(500).json({
+      error: "Erreur lors de la récupération des données antispam",
+      details: err.message,
+      code: err.code
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📧 GET /:id/antispam/:recordId — Récupération d'un enregistrement antispam complet (id, client_id, item_key, name, data)
+// ───────────────────────────────────────────────
+router.get('/:id/antispam/:recordId', async (req, res) => {
+  try {
+    const { id: clientIdParam, recordId } = req.params;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    let clientId = clientIdParam;
+    if (uuidRegex.test(clientIdParam)) {
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [clientIdParam]
+      );
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Client introuvable' });
+      }
+      clientId = clientResult.rows[0].id;
+    }
+    if (isNaN(parseInt(clientId))) {
+      return res.status(400).json({ error: 'ID client invalide' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, name, data, created_at, updated_at, is_active
+       FROM v_b_clients_m_antispam
+       WHERE client_id = $1 AND id::text = $2`,
+      [clientId, recordId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Enregistrement antispam introuvable' });
+    }
+
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      client_id: row.client_id,
+      item_key: row.item_key,
+      name: row.name,
+      data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      is_active: row.is_active
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération de l\'enregistrement antispam:', err);
+    res.status(500).json({
+      error: "Erreur lors de la récupération de l'enregistrement antispam",
+      details: err.message,
+      code: err.code
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🏷️ GET /domains/all — Récupération de tous les noms de domaine de tous les clients
+// ───────────────────────────────────────────────
+router.get('/domains/all', async (req, res) => {
+  try {
+    // Récupérer tous les domaines avec les informations du client
+    // client_id dans v_b_clients_m_ndd est un entier, v_b_clients.id peut être entier ou UUID
+    // On utilise une sous-requête avec gestion d'erreur pour les conversions de type
+    const result = await pool.query(
+      `SELECT 
+        ndd.id,
+        ndd.client_id,
+        ndd.item_key,
+        ndd.data,
+        ndd.is_active,
+        ndd.created_at,
+        ndd.updated_at,
+        COALESCE(
+          (SELECT name FROM v_b_clients 
+           WHERE (id::text ~ '^[0-9]+$' AND id::integer = ndd.client_id)
+              OR id::text = ndd.client_id::text
+           LIMIT 1),
+          'N/A'
+        ) as client_name
+       FROM v_b_clients_m_ndd ndd
+       ORDER BY client_name, ndd.created_at DESC`
+    );
+
+    // Transformer les données JSON de la colonne 'data' selon la vraie structure
+    const domainsData = result.rows.map(row => {
+      const data = row.data || {};
+
+      return {
+        id: row.id,
+        client_id: row.client_id,
+        client_name: row.client_name || 'N/A',
+        item_key: row.item_key,
+        is_active: row.is_active !== false, // S'assurer que is_active est un booléen
+        // Mapping selon la vraie structure JSON de v_b_clients_m_ndd
+        nom: data.nom || data.name || row.item_key || 'N/A',
+        registrar: data.registrar || 'N/A',
+        expiration: data.expiration || null,
+        lastSync: row.updated_at || row.created_at || null, // Utiliser updated_at pour la dernière synchro
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      };
+    });
+
+    res.json(domainsData);
+  } catch (err) {
+    console.error('Erreur lors de la récupération de tous les noms de domaine:', err);
+    res.status(500).json({
+      error: "Erreur lors de la récupération de tous les noms de domaine",
+      details: err.message,
+      code: err.code
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🏷️ GET /:id/domains — Récupération des noms de domaine d'un client
+// ───────────────────────────────────────────────
+router.get('/:id/domains', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Déterminer si l'id est un UUID ou un ID numérique
+    let clientId = id;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (uuidRegex.test(id)) {
+      // C'est un UUID, récupérer l'ID numérique
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [id]
+      );
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Client introuvable' });
+      }
+      clientId = clientResult.rows[0].id;
+      console.log(`🔄 GET domains: Conversion UUID ${id} → ID numérique ${clientId}`);
+    }
+
+    // Convertir en nombre si nécessaire
+    clientId = parseInt(clientId);
+
+    // Vérifier que clientId est bien un nombre
+    if (isNaN(clientId)) {
+      console.error(`❌ GET domains: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
+      return res.status(400).json({ error: 'ID client invalide' });
+    }
+
+    // Récupérer les données NDD du client
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, data, is_active, created_at, updated_at
+       FROM v_b_clients_m_ndd
+       WHERE client_id = $1
+       ORDER BY created_at DESC`,
+      [clientId]
+    );
+
+    // Transformer les données JSON de la colonne 'data' selon la vraie structure
+    const domainsData = result.rows.map(row => {
+      const data = row.data || {};
+
+      return {
+        id: row.id,
+        client_id: row.client_id,
+        item_key: row.item_key,
+        is_active: row.is_active,
+        // Mapping selon la vraie structure JSON de v_b_clients_m_ndd
+        nom: data.nom || data.name || 'N/A',
+        registrar: data.registrar || 'N/A',
+        expiration: data.expiration || null,
+        domain_id: data.id || null,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      };
+    });
+
+    res.json(domainsData);
+  } catch (err) {
+    console.error('Erreur lors de la récupération des noms de domaine du client:', err);
+    res.status(500).json({
+      error: "Erreur lors de la récupération des noms de domaine",
+      details: err.message,
+      code: err.code
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🔒 GET /ssl-certificates/all — Tous les certificats SSL du portefeuille
+// ───────────────────────────────────────────────
+router.get('/ssl-certificates/all', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+        ssl.id,
+        ssl.client_id,
+        ssl.item_key,
+        ssl.name,
+        ssl.data,
+        ssl.is_active,
+        ssl.created_at,
+        ssl.updated_at,
+        COALESCE(
+          (SELECT name FROM v_b_clients
+           WHERE (id::text ~ '^[0-9]+$' AND id::integer = ssl.client_id)
+              OR id::text = ssl.client_id::text
+           LIMIT 1),
+          'N/A'
+        ) as client_name
+       FROM v_b_clients_m_ssl ssl
+       WHERE ssl.is_active IS NOT FALSE
+       ORDER BY client_name, ssl.created_at DESC`
+    );
+
+    res.json(
+      result.rows.map((row) => ({
+        ...mapSslCertificateRow(row),
+        client_name: row.client_name || "N/A",
+      }))
+    );
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
+    }
+    console.error("Erreur GET ssl-certificates/all:", err);
+    res.status(500).json({
+      error: "Erreur lors de la récupération des certificats SSL",
+      details: err.message,
+      code: err.code,
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🔒 POST /ssl-certificates/check-all — Vérifier tous les certificats (TLS)
+// ───────────────────────────────────────────────
+router.post('/ssl-certificates/check-all', verifyJWT, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+       FROM v_b_clients_m_ssl
+       WHERE is_active IS NOT FALSE`
+    );
+
+    const checked = [];
+    for (const row of result.rows) {
+      const mapped = await checkAndPersistSslRow(row);
+      if (mapped) checked.push(mapped);
+    }
+
+    res.json({ checked: checked.length, items: checked });
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
+    }
+    console.error("Erreur POST ssl-certificates/check-all:", err);
+    res.status(500).json({ error: "Erreur lors de la vérification SSL", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🔒 GET /:id/ssl-certificates — Certificats SSL/TLS d'un client
+// ───────────────────────────────────────────────
+router.get('/:id/ssl-certificates', async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const { autoCheck = "false" } = req.query;
+
+    if (autoCheck === "true") {
+      const staleResult = await pool.query(
+        `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+         FROM v_b_clients_m_ssl
+         WHERE client_id = $1 AND is_active IS NOT FALSE`,
+        [clientId]
+      );
+
+      for (const row of staleResult.rows) {
+        const data = row.data && typeof row.data === "object" ? row.data : {};
+        if (isSslCheckStale(data)) {
+          await checkAndPersistSslRow(row);
+        }
+      }
+    }
+
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+       FROM v_b_clients_m_ssl
+       WHERE client_id = $1
+       ORDER BY name NULLS LAST, created_at DESC`,
+      [clientId]
+    );
+
+    res.json(result.rows.map(mapSslCertificateRow));
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.json([]);
+    }
+    console.error("Erreur GET ssl-certificates:", err);
+    res.status(500).json({
+      error: "Erreur lors de la récupération des certificats SSL",
+      details: err.message,
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🔒 POST /:id/ssl-certificates — Ajouter un hôte à surveiller
+// ───────────────────────────────────────────────
+router.post('/:id/ssl-certificates', verifyJWT, async (req, res) => {
+  let clientId;
+  let hostname;
+  try {
+    clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    hostname = String(req.body?.hostname || req.body?.host || req.body?.name || "").trim();
+    const port = Number(req.body?.port) || 443;
+    const checkIntervalHours = resolveSslCheckIntervalHours({
+      checkIntervalHours: req.body?.checkIntervalHours,
+    });
+    if (!hostname) {
+      return res.status(400).json({ error: "Nom d'hôte requis" });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO v_b_clients_m_ssl (client_id, item_key, name, data, is_active)
+       VALUES ($1, $2, $3, $4, true)
+       RETURNING id, client_id, item_key, name, data, is_active, created_at, updated_at`,
+      [clientId, hostname, hostname, JSON.stringify({ hostname, port, checkIntervalHours })]
+    );
+
+    res.status(201).json(mapSslCertificateRow(result.rows[0]));
+  } catch (err) {
+    if (err.code === "23505") {
+      try {
+        const existing = await pool.query(
+          `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+           FROM v_b_clients_m_ssl
+           WHERE client_id = $1 AND (name = $2 OR item_key = $2)
+           LIMIT 1`,
+          [clientId, hostname]
+        );
+        if (existing.rows[0]) {
+          return res.json(mapSslCertificateRow(existing.rows[0]));
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
+    }
+    console.error("Erreur POST ssl-certificates:", err);
+    res.status(500).json({ error: "Erreur lors de l'ajout du certificat SSL", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🔒 POST /:id/ssl-certificates/check — Vérifier tous les certificats (TLS)
+// ───────────────────────────────────────────────
+router.post('/:id/ssl-certificates/check', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active
+       FROM v_b_clients_m_ssl
+       WHERE client_id = $1 AND is_active IS NOT FALSE`,
+      [clientId]
+    );
+
+    const checked = [];
+    for (const row of result.rows) {
+      const mapped = await checkAndPersistSslRow(row);
+      if (mapped) checked.push(mapped);
+    }
+
+    res.json({ checked: checked.length, items: checked });
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
+    }
+    console.error("Erreur POST ssl-certificates/check:", err);
+    res.status(500).json({ error: "Erreur lors de la vérification SSL", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🔒 POST /:id/ssl-certificates/:certId/check — Vérifier un certificat
+// ───────────────────────────────────────────────
+router.post('/:id/ssl-certificates/:certId/check', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const certId = String(req.params.certId || "").trim();
+    const existing = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+       FROM v_b_clients_m_ssl
+       WHERE id = $1 AND client_id = $2`,
+      [certId, clientId]
+    );
+    if (!existing.rows[0]) {
+      return res.status(404).json({ error: "Certificat introuvable" });
+    }
+
+    const mapped = await checkAndPersistSslRow(existing.rows[0]);
+    if (!mapped) {
+      return res.status(400).json({ error: "Hôte invalide pour la vérification" });
+    }
+
+    res.json(mapped);
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
+    }
+    console.error("Erreur POST ssl-certificates/:certId/check:", err);
+    res.status(500).json({ error: "Erreur lors de la vérification SSL", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🔒 PUT /:id/ssl-certificates/:certId — Modifier un hôte surveillé
+// ───────────────────────────────────────────────
+router.put('/:id/ssl-certificates/:certId', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const certId = String(req.params.certId || "").trim();
+    const existing = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+       FROM v_b_clients_m_ssl
+       WHERE id = $1 AND client_id = $2`,
+      [certId, clientId]
+    );
+    if (!existing.rows[0]) {
+      return res.status(404).json({ error: "Certificat introuvable" });
+    }
+
+    const current = mapSslCertificateRow(existing.rows[0]);
+    const data = existing.rows[0].data && typeof existing.rows[0].data === "object"
+      ? existing.rows[0].data
+      : {};
+
+    const hostname = String(
+      req.body?.hostname ?? req.body?.host ?? current.hostname ?? ""
+    ).trim();
+    const port = req.body?.port !== undefined ? Number(req.body.port) || 443 : current.port;
+    const checkIntervalHours = req.body?.checkIntervalHours !== undefined
+      ? resolveSslCheckIntervalHours({ checkIntervalHours: req.body.checkIntervalHours })
+      : resolveSslCheckIntervalHours(data);
+    const isActive = req.body?.is_active !== undefined ? Boolean(req.body.is_active) : current.is_active;
+
+    if (!hostname) {
+      return res.status(400).json({ error: "Nom d'hôte requis" });
+    }
+
+    const nextData = {
+      ...data,
+      hostname,
+      port,
+      checkIntervalHours,
+    };
+
+    const result = await pool.query(
+      `UPDATE v_b_clients_m_ssl
+       SET item_key = $3, name = $3, data = $4, is_active = $5, updated_at = NOW()
+       WHERE id = $1 AND client_id = $2
+       RETURNING id, client_id, item_key, name, data, is_active, created_at, updated_at`,
+      [certId, clientId, hostname, JSON.stringify(nextData), isActive]
+    );
+
+    res.json(mapSslCertificateRow(result.rows[0]));
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
+    }
+    console.error("Erreur PUT ssl-certificates:", err);
+    res.status(500).json({ error: "Erreur lors de la mise à jour du certificat SSL", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🔒 DELETE /:id/ssl-certificates/:certId — Supprimer un hôte surveillé
+// ───────────────────────────────────────────────
+router.delete('/:id/ssl-certificates/:certId', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const certId = String(req.params.certId || "").trim();
+    const result = await pool.query(
+      `DELETE FROM v_b_clients_m_ssl
+       WHERE id = $1 AND client_id = $2
+       RETURNING id`,
+      [certId, clientId]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Certificat introuvable" });
+    }
+
+    res.json({ success: true, id: result.rows[0].id });
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
+    }
+    console.error("Erreur DELETE ssl-certificates:", err);
+    res.status(500).json({ error: "Erreur lors de la suppression du certificat SSL", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📄 GET /:id/licences — Licences et abonnements d'un client
+// ───────────────────────────────────────────────
+router.get('/:id/licences', async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+       FROM v_b_clients_m_licences
+       WHERE client_id = $1 AND is_active IS NOT FALSE
+       ORDER BY name NULLS LAST, created_at DESC`,
+      [clientId]
+    );
+
+    res.json(result.rows.map(mapLicenceRow));
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.json([]);
+    }
+    console.error("Erreur GET licences:", err);
+    res.status(500).json({
+      error: "Erreur lors de la récupération des licences",
+      details: err.message,
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📄 POST /:id/licences — Ajouter une licence / abonnement
+// ───────────────────────────────────────────────
+router.post('/:id/licences', verifyJWT, async (req, res) => {
+  let clientId;
+  let nom;
+  try {
+    clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    nom = String(req.body?.nom || req.body?.name || "").trim();
+    const expiration = String(req.body?.expiration || "").trim() || null;
+    const fournisseur = String(req.body?.fournisseur || req.body?.vendor || "").trim() || null;
+    const notes = String(req.body?.notes || req.body?.note || "").trim() || null;
+
+    if (!nom) {
+      return res.status(400).json({ error: "Le nom est requis" });
+    }
+
+    const data = { nom, expiration, fournisseur, notes };
+    const result = await pool.query(
+      `INSERT INTO v_b_clients_m_licences (client_id, item_key, name, data, is_active)
+       VALUES ($1, $2, $3, $4, true)
+       RETURNING id, client_id, item_key, name, data, is_active, created_at, updated_at`,
+      [clientId, nom, nom, JSON.stringify(data)]
+    );
+
+    res.status(201).json(mapLicenceRow(result.rows[0]));
+  } catch (err) {
+    if (err.code === "23505" && clientId && nom) {
+      try {
+        const existing = await pool.query(
+          `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+           FROM v_b_clients_m_licences
+           WHERE client_id = $1 AND (name = $2 OR item_key = $2)
+           LIMIT 1`,
+          [clientId, nom]
+        );
+        if (existing.rows[0]) {
+          return res.json(mapLicenceRow(existing.rows[0]));
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module licences non disponible (migration requise)" });
+    }
+    console.error("Erreur POST licences:", err);
+    res.status(500).json({ error: "Erreur lors de l'ajout de la licence", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📄 PUT /:id/licences/:licenceId — Modifier une licence
+// ───────────────────────────────────────────────
+router.put('/:id/licences/:licenceId', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const licenceId = String(req.params.licenceId || "").trim();
+    if (!licenceId) {
+      return res.status(400).json({ error: "Identifiant licence requis" });
+    }
+
+    const existing = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+       FROM v_b_clients_m_licences
+       WHERE id = $1 AND client_id = $2`,
+      [licenceId, clientId]
+    );
+    if (!existing.rows[0]) {
+      return res.status(404).json({ error: "Licence introuvable" });
+    }
+
+    const current = mapLicenceRow(existing.rows[0]);
+    const nom = String(req.body?.nom ?? req.body?.name ?? current.nom).trim();
+    const expiration = req.body?.expiration !== undefined
+      ? (String(req.body.expiration || "").trim() || null)
+      : current.expiration;
+    const fournisseur = req.body?.fournisseur !== undefined
+      ? (String(req.body.fournisseur || "").trim() || null)
+      : current.fournisseur;
+    const notes = req.body?.notes !== undefined
+      ? (String(req.body.notes || "").trim() || null)
+      : current.notes;
+
+    if (!nom) {
+      return res.status(400).json({ error: "Le nom est requis" });
+    }
+
+    const data = { nom, expiration, fournisseur, notes };
+    const result = await pool.query(
+      `UPDATE v_b_clients_m_licences
+       SET item_key = $3, name = $3, data = $4, updated_at = NOW()
+       WHERE id = $1 AND client_id = $2
+       RETURNING id, client_id, item_key, name, data, is_active, created_at, updated_at`,
+      [licenceId, clientId, nom, JSON.stringify(data)]
+    );
+
+    res.json(mapLicenceRow(result.rows[0]));
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module licences non disponible (migration requise)" });
+    }
+    console.error("Erreur PUT licences:", err);
+    res.status(500).json({ error: "Erreur lors de la mise à jour de la licence", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📄 DELETE /:id/licences/:licenceId — Supprimer une licence
+// ───────────────────────────────────────────────
+router.delete('/:id/licences/:licenceId', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+
+    const licenceId = String(req.params.licenceId || "").trim();
+    const result = await pool.query(
+      `DELETE FROM v_b_clients_m_licences
+       WHERE id = $1 AND client_id = $2
+       RETURNING id`,
+      [licenceId, clientId]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Licence introuvable" });
+    }
+
+    res.status(204).send();
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module licences non disponible (migration requise)" });
+    }
+    console.error("Erreur DELETE licences:", err);
+    res.status(500).json({ error: "Erreur lors de la suppression de la licence", details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📦 Matériel personnalisé (familles configurables)
+// ───────────────────────────────────────────────
+router.get('/:id/custom-equipment', async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+    const familyKey = req.query.familyKey ? String(req.query.familyKey).trim() : null;
+    const items = await listClientCustomEquipment(clientId, familyKey || null);
+    res.json(items);
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
+    }
+    console.error("Erreur GET custom-equipment:", err);
+    res.status(500).json({ error: "Erreur lors de la récupération du matériel personnalisé" });
+  }
+});
+
+router.get('/:id/custom-equipment-map', async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+    const [families, items] = await Promise.all([
+      listEquipmentFamilies({ includeDisabled: false }),
+      listClientCustomEquipment(clientId),
+    ]);
+    const grouped = families.map((family) => ({
+      ...family,
+      items: items.filter((item) => item.familyKey === family.familyKey),
+      count: items.filter((item) => item.familyKey === family.familyKey).length,
+    }));
+    res.json({ families: grouped });
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
+    }
+    console.error("Erreur GET custom-equipment-map:", err);
+    res.status(500).json({ error: "Erreur lors de la récupération de la cartographie matériel" });
+  }
+});
+
+router.post('/:id/custom-equipment/:familyKey', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+    const familyKey = String(req.params.familyKey || "").trim();
+    const item = await createClientCustomEquipment(clientId, familyKey, req.body || {});
+    res.status(201).json(item);
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
+    }
+    console.error("Erreur POST custom-equipment:", err);
+    res.status(500).json({ error: "Erreur lors de la création du matériel" });
+  }
+});
+
+router.put('/:id/custom-equipment/:familyKey/:itemId', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+    const familyKey = String(req.params.familyKey || "").trim();
+    const itemId = String(req.params.itemId || "").trim();
+    const item = await updateClientCustomEquipment(clientId, familyKey, itemId, req.body || {});
+    res.json(item);
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
+    }
+    console.error("Erreur PUT custom-equipment:", err);
+    res.status(500).json({ error: "Erreur lors de la mise à jour du matériel" });
+  }
+});
+
+router.delete('/:id/custom-equipment/:familyKey/:itemId', verifyJWT, async (req, res) => {
+  try {
+    const clientId = await resolveNumericClientId(req.params.id);
+    if (!clientId) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+    const familyKey = String(req.params.familyKey || "").trim();
+    const itemId = String(req.params.itemId || "").trim();
+    await deleteClientCustomEquipment(clientId, familyKey, itemId);
+    res.status(204).send();
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
+    }
+    console.error("Erreur DELETE custom-equipment:", err);
+    res.status(500).json({ error: "Erreur lors de la suppression du matériel" });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🗑️ DELETE /:id/logs — Purge de tous les logs d'un client
+// ───────────────────────────────────────────────
+router.delete('/:id/logs', verifyJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Garder l'ID original (UUID ou numérique) pour la table des logs
+    const originalClientId = id;
+    let numericClientId = id;
+
+    // Déterminer si l'id est un UUID ou un ID numérique
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (uuidRegex.test(id)) {
+      // C'est un UUID, récupérer l'ID numérique pour les requêtes WHERE
+      const clientResult = await pool.query(
+        'SELECT id FROM v_b_clients WHERE id::text = $1',
+        [id]
+      );
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Client introuvable' });
+      }
+      numericClientId = clientResult.rows[0].id;
+      console.log(`🔄 DELETE logs: Conversion UUID ${id} → ID numérique ${numericClientId}`);
+    }
+
+    // Utiliser l'ID original pour les logs (respecte le schéma de la table)
+    const logClientId = originalClientId;
+
+    // Récupérer le nombre de logs avant suppression pour le log
+    const countResult = await pool.query(
+      'SELECT COUNT(*) as total FROM v_b_clients_logs WHERE client_id::text = $1',
+      [logClientId]
+    );
+    const logsCount = parseInt(countResult.rows[0].total) || 0;
+
+    // Supprimer tous les logs du client
+    const deleteResult = await pool.query(
+      'DELETE FROM v_b_clients_logs WHERE client_id::text = $1',
+      [logClientId]
+    );
+
+    // Créer un log de l'action de purge
+    const rawUserId = req.user?.id || req.user?.user_id || null;
+    const uuidRegexUser = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const userId = rawUserId && uuidRegexUser.test(String(rawUserId)) ? String(rawUserId) : null;
+
+    await pool.query(
+      `INSERT INTO v_b_clients_logs
+       (client_id, user_id, action, details, created_at)
+       VALUES ($1, $2, $3, $4, NOW())`,
+      [
+        logClientId,
+        userId,
+        'PURGE_LOGS',
+        JSON.stringify({
+          action: 'Purge complète des logs',
+          logs_deleted: logsCount,
+          timestamp: new Date().toISOString()
+        })
+      ]
+    );
+
+    console.log(`🗑️ Logs purgés pour le client ${logClientId}: ${logsCount} logs supprimés`);
+
+    res.json({
+      success: true,
+      message: `Logs purgés avec succès`,
+      logs_deleted: logsCount,
+      client_id: logClientId
+    });
+
+  } catch (err) {
+    console.error('Erreur lors de la purge des logs du client:', err);
+    res.status(500).json({
+      error: "Erreur lors de la purge des logs",
+      details: err.message,
+      code: err.code
+    });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 🏷️ Étiquettes & notes client
+// ───────────────────────────────────────────────
+registerClientMetaRoutes(router);
+
+// ───────────────────────────────────────────────
+// 🔍 GET /:id/deletion-check — Vérifie si une entreprise peut être supprimée
+// ───────────────────────────────────────────────
+router.get('/:id/deletion-check', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const exists = await pool.query('SELECT id, name FROM v_b_clients WHERE id = $1', [id]);
+    if (exists.rows.length === 0) {
+      return res.status(404).json({ error: 'Entreprise introuvable' });
+    }
+    const status = await getClientDeletionStatus(id);
+    res.json({
+      clientId: id,
+      name: exists.rows[0].name,
+      ...status,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur lors de la vérification', details: err.message });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📥 GET /:id — Récupération d'un client par ID (avec modules)
+// ⚠️ Cette route doit être APRÈS /general/:id pour éviter les conflits
+// ───────────────────────────────────────────────
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(`
+      SELECT c.*, u.username, u.email as user_email
+      FROM v_b_clients c
+      LEFT JOIN v_b_users u ON c.commercial_id::text = u.id::text
+      WHERE c.id = $1
+    `, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Client introuvable" });
+    }
+    
+    const client = result.rows[0];
+    
+    // Charger les modules depuis les nouvelles tables (Pro uniquement)
+    if (!isCommunity()) {
+    try {
+      const rawModulesData = {};
+      for (const [family, table] of Object.entries(MODULE_TABLES)) {
+        try {
+          let moduleResult;
+          const baseSelect = `SELECT id, item_key, name, data, is_active, created_at, updated_at, checkmk_host_name, checkmk_site, checkmk_service_name`;
+          const saveExtraSelect = table === 'v_b_clients_m_save' ? ', last_backup_date, last_backup_duration, last_backup_start' : '';
+          try {
+            moduleResult = await pool.query(
+              `${baseSelect}${saveExtraSelect}
+               FROM ${table}
+               WHERE client_id = $1
+               ORDER BY name NULLS LAST, item_key NULLS LAST`,
+              [id]
+            );
+          } catch (colErr) {
+            if (colErr.code === '42703') {
+              moduleResult = await pool.query(
+                `SELECT id, item_key, name, data, is_active, created_at, updated_at
+                 FROM ${table}
+                 WHERE client_id = $1
+                 ORDER BY name NULLS LAST, item_key NULLS LAST`,
+                [id]
+              );
+              moduleResult.rows.forEach(r => {
+                r.checkmk_host_name = null;
+                r.checkmk_site = null;
+                r.checkmk_service_name = null;
+                if (table === 'v_b_clients_m_save') {
+                  r.last_backup_date = null;
+                  r.last_backup_duration = null;
+                }
+              });
+            } else throw colErr;
+          }
+          
+          // Parser data si c'est une string (au cas où PostgreSQL ne le parse pas automatiquement)
+          const parsedRows = moduleResult.rows.map(row => {
+            if (row.data && typeof row.data === 'string') {
+              try {
+                row.data = JSON.parse(row.data);
+              } catch (e) {
+                row.data = {};
+              }
+            } else if (!row.data) {
+              row.data = {};
+            }
+            return row;
+          });
+          
+          rawModulesData[family] = parsedRows;
+        } catch (err) {
+          if (err.code === '42P01') {
+            rawModulesData[family] = [];
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      let azureHasCredentials = false;
+      try {
+        const azureResult = await pool.query(
+          "SELECT 1 FROM v_b_clients_azure WHERE client_id = $1 LIMIT 1",
+          [id]
+        );
+        azureHasCredentials = azureResult.rows.length > 0;
+      } catch (azureErr) {
+      }
+
+      const transformed = transformClientModulesToFrontend(rawModulesData, { azureHasCredentials });
+      
+      client.modules = transformed.modules || {};
+      client.modules_monitoring = transformed.modules_monitoring || {};
+      client.equipements = transformed.equipements || {};
+    } catch (moduleErr) {
+      // Si erreur lors du chargement des modules, continuer sans
+      client.modules = {};
+      client.modules_monitoring = {};
+      client.equipements = {};
+    }
+    } else {
+      client.modules = {};
+      client.modules_monitoring = {};
+      client.equipements = {};
+    }
+    
+    // Parser contrat
+    if (client.contrat && typeof client.contrat === 'string') {
+      try {
+        client.contrat = JSON.parse(client.contrat);
+      } catch (e) {
+        client.contrat = {};
+      }
+    }
+    
+    // Parser options (nouveau) ou modules (ancien) pour compatibilité
+    let clientOptions = client.options || client.modules || {};
+    if (clientOptions && typeof clientOptions === 'string') {
+      try {
+        clientOptions = JSON.parse(clientOptions);
+      } catch (e) {
+        clientOptions = {};
+      }
+    }
+    client.options = clientOptions;
+    client.modules = clientOptions; // Garder modules pour compatibilité frontend
+    
+    // Parser sites
+    if (client.sites) {
+      if (typeof client.sites === 'string') {
+        try {
+          client.sites = JSON.parse(client.sites);
+        } catch (e) {
+          client.sites = [];
+        }
+      }
+    } else {
+      client.sites = [];
+    }
+    
+    // Parser ssid (nouveau) ou ssids (ancien) pour compatibilité
+    let clientSSID = client.ssid || client.ssids || [];
+    if (clientSSID && typeof clientSSID === 'string') {
+      try {
+        clientSSID = JSON.parse(clientSSID);
+      } catch (e) {
+        clientSSID = [];
+      }
+    }
+    client.ssid = clientSSID;
+    client.ssids = clientSSID; // Garder ssids pour compatibilité frontend
+
+    // Définir le nom commercial depuis les données de jointure
+    client.commercial = client.username || client.user_email || null;
+
+    res.json(client);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// ➕ POST / — Création d'un client (monitoring)
+// ───────────────────────────────────────────────
+router.post('/', async (req, res) => {
+  try {
+    await assertCommunityClientsLimit(1);
+    const { name, modules, options, modules_monitoring, contrat, commercialId } = req.body;
+    // Support de l'ancienne structure (modules) et de la nouvelle (options)
+    const defaultOptions = options || modules || {};
+    const modulesWithMonitoring = { ...defaultOptions, Monitoring: true };
+    const defaultContrat = contrat || {};
+
+    // Construire la requête INSERT dynamiquement selon si commercialId est fourni
+    const insertFields = ['name', 'options', 'contrat'];
+    const insertValues = [name, JSON.stringify(modulesWithMonitoring), JSON.stringify(defaultContrat)];
+    let paramIndex = 4;
+
+    if (commercialId && commercialId !== "") {
+      insertFields.push('commercial_id');
+      insertValues.push(commercialId);
+      paramIndex++;
+    }
+
+    const placeholders = insertValues.map((_, i) => `$${i + 1}`).join(', ');
+
+    const result = await pool.query(
+      `INSERT INTO v_b_clients (${insertFields.join(', ')})
+       VALUES (${placeholders})
+       RETURNING id`,
+      insertValues
+    );
+
+    const newClientId = result.rows[0].id;
+    invalidateClientsListCache();
+
+    res.status(201).json({ success: true, id: newClientId });
+  } catch (err) {
+    if (err?.code?.startsWith("COMMUNITY_")) {
+      return sendCommunityLimitError(res, err);
+    }
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// ➕ POST /general — Création d'un client général
+// ───────────────────────────────────────────────
+router.post('/general', async (req, res) => {
+  try {
+    await assertCommunityClientsLimit(1);
+    const { name, clientNumber, client_number, contrat, options, modules, modules_monitoring, sites, ssid, ssids, commercialId, address, siret, secteur } = req.body;
+    const resolvedClientNumber = normalizeClientNumber(
+      clientNumber !== undefined ? clientNumber : client_number
+    );
+
+
+    // Support de l'ancienne structure (modules) et de la nouvelle (options)
+    const defaultOptions = options || modules || {
+      Support: false,
+      Curatif: false,
+      Preventif: false,
+      Monitoring: false,
+      Hebergement: false
+    };
+    const defaultModulesMonitoring = modules_monitoring || {};
+    
+    const finalContrat = contrat || {};
+
+    // IMPORTANT: Utiliser 'options' et non 'modules' (la colonne 'modules' n'existe plus)
+    // Version du code: 2026-01-12 - Utilise 'options' au lieu de 'modules'
+    
+    const cleanSites = (sites && Array.isArray(sites)) ? sites : [];
+    assertCommunitySitesLimit(cleanSites);
+    
+    // Construire la requête INSERT dynamiquement selon si commercialId est fourni
+    // On stocke désormais les modules de monitoring dans la colonne JSONB "modules"
+    const insertFields = ['name', 'contrat', 'options', 'sites', 'modules'];
+    const insertValues = [
+      name,
+      JSON.stringify(finalContrat),
+      JSON.stringify(defaultOptions),
+      JSON.stringify(cleanSites),
+      JSON.stringify(defaultModulesMonitoring || {})
+    ];
+
+    // Champs optionnels supplémentaires
+    if (address !== undefined) {
+      insertFields.push('address');
+      insertValues.push(address);
+    }
+    if (siret !== undefined) {
+      insertFields.push('siret');
+      insertValues.push(siret);
+    }
+    if (secteur !== undefined) {
+      insertFields.push('secteur');
+      insertValues.push(secteur);
+    }
+    if (resolvedClientNumber !== null) {
+      insertFields.push('client_number');
+      insertValues.push(resolvedClientNumber);
+    } else if (clientNumber !== undefined || client_number !== undefined) {
+      insertFields.push('client_number');
+      insertValues.push(null);
+    }
+
+    if (commercialId && commercialId !== "") {
+      insertFields.push('commercial_id');
+      insertValues.push(commercialId);
+    }
+
+    const placeholders = insertValues.map((_, i) => `$${i + 1}`).join(', ');
+
+    const result = await pool.query(
+      `INSERT INTO v_b_clients (${insertFields.join(', ')})
+       VALUES (${placeholders})
+       RETURNING id, name, client_number, contrat, options, sites, commercial_id, created_at, updated_at`,
+      insertValues
+    );
+
+    invalidateClientsListCache();
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err?.code?.startsWith("COMMUNITY_")) {
+      return sendCommunityLimitError(res, err);
+    }
+    console.error('[POST /general] ERREUR SQL:', err.message);
+    console.error('[POST /general] Code erreur:', err.code);
+    console.error('[POST /general] Requete SQL utilisee: INSERT avec colonne "options"');
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// ✏️ PUT /:id — Mise à jour d'un client (monitoring ou général)
+// ───────────────────────────────────────────────
+router.put('/:id', verifyJWT, async (req, res) => {
+  try {
+    const availableColumns = await getClientsAvailableColumns();
+    const hasClientColumn = (columnName) => availableColumns.has(String(columnName || "").trim());
+    // Si la requête contient des champs généraux (comme office365_data, ssids, siret, secteur), utiliser la logique de mise à jour partielle
+    const { name, clientNumber, client_number, email, phone, address, contrat, options, modules, modules_monitoring, sites, ssid, ssids, office365_data, commercialId, siret, secteur } = req.body;
+    const resolvedClientNumber =
+      clientNumber !== undefined || client_number !== undefined
+        ? normalizeClientNumber(clientNumber !== undefined ? clientNumber : client_number)
+        : undefined;
+    
+    // Si des champs généraux OU des modules de monitoring sont présents, ne mettre à jour que ceux envoyés (évite d'écraser name en null)
+    if (name !== undefined || clientNumber !== undefined || client_number !== undefined || email !== undefined || phone !== undefined || address !== undefined || office365_data !== undefined || sites !== undefined || ssid !== undefined || ssids !== undefined || options !== undefined || modules !== undefined || contrat !== undefined || commercialId !== undefined || siret !== undefined || secteur !== undefined || modules_monitoring !== undefined) {
+      const previousClientSnapshot = await getClientSnapshotForNotification(req.params.id);
+      let updateFields = [];
+      let updateValues = [];
+      let paramIndex = 1;
+
+      if (name !== undefined && hasClientColumn("name")) {
+        updateFields.push(`name = $${paramIndex++}`);
+        updateValues.push(name);
+      }
+      if (resolvedClientNumber !== undefined && hasClientColumn("client_number")) {
+        updateFields.push(`client_number = $${paramIndex++}`);
+        updateValues.push(resolvedClientNumber);
+      }
+      if (email !== undefined && hasClientColumn("email")) {
+        updateFields.push(`email = $${paramIndex++}`);
+        updateValues.push(email);
+      }
+      if (phone !== undefined && hasClientColumn("phone")) {
+        updateFields.push(`phone = $${paramIndex++}`);
+        updateValues.push(phone);
+      }
+      if (address !== undefined && hasClientColumn("address")) {
+        updateFields.push(`address = $${paramIndex++}`);
+        updateValues.push(address);
+      }
+      if (siret !== undefined && hasClientColumn("siret")) {
+        updateFields.push(`siret = $${paramIndex++}`);
+        updateValues.push(siret);
+      }
+      if (secteur !== undefined && hasClientColumn("secteur")) {
+        updateFields.push(`secteur = $${paramIndex++}`);
+        updateValues.push(secteur);
+      }
+      if (commercialId !== undefined && commercialId !== "" && hasClientColumn("commercial_id")) {
+        updateFields.push(`commercial_id = $${paramIndex++}`);
+        updateValues.push(commercialId);
+      }
+      
+      let finalContrat = undefined;
+      let finalOptions = undefined;
+      let finalModulesMonitoring = undefined;
+
+      if (contrat !== undefined && hasClientColumn("contrat")) {
+        finalContrat = contrat || {};
+        updateFields.push(`contrat = $${paramIndex++}`);
+        updateValues.push(JSON.stringify(finalContrat));
+      }
+      
+      // Support de l'ancienne structure (modules) et de la nouvelle (options)
+      if ((options !== undefined || modules !== undefined) && hasClientColumn("options")) {
+        finalOptions = options || modules || {};
+        updateFields.push(`options = $${paramIndex++}`);
+        updateValues.push(JSON.stringify(finalOptions));
+      }
+      
+      // Nouveau : stocker les modules de monitoring dans v_b_clients.modules (JSONB)
+      if (modules_monitoring !== undefined && hasClientColumn("modules")) {
+        finalModulesMonitoring = modules_monitoring || {};
+        updateFields.push(`modules = $${paramIndex++}`);
+        updateValues.push(JSON.stringify(finalModulesMonitoring));
+      }
+      
+      if (sites !== undefined && hasClientColumn("sites")) {
+        assertCommunitySitesLimit(sites || []);
+        updateFields.push(`sites = $${paramIndex++}`);
+        updateValues.push(JSON.stringify(sites || []));
+      }
+      
+      if (office365_data !== undefined && office365_data !== null && hasClientColumn("office365_data")) {
+        updateFields.push(`office365_data = $${paramIndex++}`);
+        updateValues.push(typeof office365_data === 'object' ? JSON.stringify(office365_data) : office365_data);
+      }
+
+      paramIndex = appendClientSsidUpdate({
+        ssid,
+        ssids,
+        hasClientColumn,
+        updateFields,
+        updateValues,
+        paramIndex,
+      });
+
+      if (updateFields.length === 0) {
+        return res.status(400).json({ error: "Aucune donnée à mettre à jour" });
+      }
+
+      // Ajouter l'ID à la fin des valeurs
+      updateValues.push(req.params.id);
+      const idParamIndex = paramIndex;
+
+      const updateQuery = `
+        UPDATE v_b_clients 
+        SET ${updateFields.join(', ')}
+        WHERE id = $${idParamIndex}
+      `;
+      
+      await pool.query(updateQuery, updateValues);
+
+      await logClientUpdate({
+        req,
+        updateFields,
+        valueMap: {
+          name,
+          client_number: resolvedClientNumber,
+          email,
+          phone,
+          address,
+          siret,
+          secteur,
+          commercial_id: commercialId,
+          contrat: finalContrat,
+          options: finalOptions,
+          modules_monitoring: finalModulesMonitoring,
+          sites,
+          office365_data,
+          ssid: ssids !== undefined ? ssids : ssid,
+        }
+      });
+
+      const changedFieldNames = updateFields
+        .map((field) => String(field).split("=")[0]?.trim())
+        .filter(Boolean);
+      const changedFieldNamesWithFallback =
+        changedFieldNames.length > 0
+          ? changedFieldNames
+          : Object.keys(req.body || {})
+              .map((key) => String(key || "").trim())
+              .filter(Boolean);
+      const nextValueMapForNotification = {
+        name: name !== undefined ? name : previousClientSnapshot?.name ?? null,
+        email: email !== undefined ? email : previousClientSnapshot?.email ?? null,
+        phone: phone !== undefined ? phone : previousClientSnapshot?.phone ?? null,
+        address: address !== undefined ? address : previousClientSnapshot?.address ?? null,
+        siret: siret !== undefined ? siret : previousClientSnapshot?.siret ?? null,
+        secteur: secteur !== undefined ? secteur : previousClientSnapshot?.secteur ?? null,
+        commercial_id: commercialId !== undefined && commercialId !== "" ? commercialId : previousClientSnapshot?.commercial_id ?? null,
+        contrat: finalContrat !== undefined ? finalContrat : previousClientSnapshot?.contrat ?? null,
+        options: finalOptions !== undefined ? finalOptions : previousClientSnapshot?.options ?? null,
+        modules: finalModulesMonitoring !== undefined ? finalModulesMonitoring : previousClientSnapshot?.modules ?? null,
+        sites: sites !== undefined ? (sites || []) : previousClientSnapshot?.sites ?? null,
+        office365_data:
+          office365_data !== undefined && office365_data !== null
+            ? office365_data
+            : previousClientSnapshot?.office365_data ?? null,
+      };
+      const notificationChanges = buildNotificationChanges(
+        previousClientSnapshot || {},
+        changedFieldNamesWithFallback,
+        nextValueMapForNotification
+      );
+
+      dispatchNotificationEvent({
+        source: "entreprise",
+        element: "updated",
+        enterpriseId: String(req.params.id || ""),
+        user: req.user,
+        context: {
+          entreprise: {
+            id: String(req.params.id || ""),
+            nom: name || previousClientSnapshot?.name || "",
+          },
+          changedFields: changedFieldNamesWithFallback,
+          changes: notificationChanges,
+        },
+      }).catch(() => {});
+      if (changedFieldNamesWithFallback.includes("contrat")) {
+        dispatchNotificationEvent({
+          source: "entreprise",
+          element: "contract_info_updated",
+          enterpriseId: String(req.params.id || ""),
+          user: req.user,
+          context: {
+            entreprise: { id: String(req.params.id || ""), nom: name || previousClientSnapshot?.name || "" },
+            changedFields: changedFieldNamesWithFallback,
+            changes: notificationChanges,
+          },
+        }).catch(() => {});
+      }
+      if (changedFieldNamesWithFallback.includes("office365_data")) {
+        dispatchNotificationEvent({
+          source: "services",
+          element: "tenant_updated",
+          enterpriseId: String(req.params.id || ""),
+          user: req.user,
+          context: {
+            entreprise: { id: String(req.params.id || ""), nom: name || previousClientSnapshot?.name || "" },
+            changedFields: changedFieldNamesWithFallback,
+            changes: notificationChanges,
+          },
+        }).catch(() => {});
+      }
+
+      invalidateClientsListCache();
+      res.json({ success: true });
+    } else {
+      // Logique originale pour les clients monitoring (body sans champs généraux)
+      // Support de l'ancienne structure (modules) et de la nouvelle (options)
+      const defaultOptions = options || modules || {};
+      const modulesWithMonitoring = { ...defaultOptions, Monitoring: true };
+      const defaultContrat = contrat || {};
+      await pool.query(
+        `UPDATE v_b_clients 
+         SET name = $1, options = $2, contrat = $3
+         WHERE id = $4`,
+        [name, JSON.stringify(modulesWithMonitoring), JSON.stringify(defaultContrat), req.params.id]
+      );
+      dispatchNotificationEvent({
+        source: "entreprise",
+        element: "updated",
+        enterpriseId: String(req.params.id || ""),
+        user: req.user,
+        context: {
+          entreprise: { id: String(req.params.id || ""), nom: name || "" },
+        },
+      }).catch(() => {});
+      invalidateClientsListCache();
+      res.json({ success: true });
+    }
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// ✏️ PUT /general/:id — Mise à jour d'un client général
+// ───────────────────────────────────────────────
+router.put('/general/:id', verifyJWT, async (req, res) => {
+  try {
+    const availableColumns = await getClientsAvailableColumns();
+    const hasClientColumn = (columnName) => availableColumns.has(String(columnName || "").trim());
+    const { name, clientNumber, client_number, email, phone, address, contrat, options, modules, modules_monitoring, sites, ssid, ssids, office365_data, commercialId, siret, secteur } = req.body;
+    const resolvedClientNumber =
+      clientNumber !== undefined || client_number !== undefined
+        ? normalizeClientNumber(clientNumber !== undefined ? clientNumber : client_number)
+        : undefined;
+    const previousClientSnapshot = await getClientSnapshotForNotification(req.params.id);
+    let updateFields = [];
+    let updateValues = [];
+    let paramIndex = 1;
+
+    if (name !== undefined && hasClientColumn("name")) {
+      updateFields.push(`name = $${paramIndex++}`);
+      updateValues.push(name);
+    }
+    if (resolvedClientNumber !== undefined && hasClientColumn("client_number")) {
+      updateFields.push(`client_number = $${paramIndex++}`);
+      updateValues.push(resolvedClientNumber);
+    }
+    if (email !== undefined && hasClientColumn("email")) {
+      updateFields.push(`email = $${paramIndex++}`);
+      updateValues.push(email);
+    }
+    if (phone !== undefined && hasClientColumn("phone")) {
+      updateFields.push(`phone = $${paramIndex++}`);
+      updateValues.push(phone);
+    }
+    if (address !== undefined && hasClientColumn("address")) {
+      updateFields.push(`address = $${paramIndex++}`);
+      updateValues.push(address);
+    }
+    if (siret !== undefined && hasClientColumn("siret")) {
+      updateFields.push(`siret = $${paramIndex++}`);
+      updateValues.push(siret);
+    }
+    if (secteur !== undefined && hasClientColumn("secteur")) {
+      updateFields.push(`secteur = $${paramIndex++}`);
+      updateValues.push(secteur);
+    }
+    if (commercialId !== undefined && commercialId !== "" && hasClientColumn("commercial_id")) {
+      updateFields.push(`commercial_id = $${paramIndex++}`);
+      updateValues.push(commercialId);
+    }
+    
+    let finalContrat = undefined;
+    let finalOptions = undefined;
+    let finalModulesMonitoring = undefined;
+
+    if (contrat !== undefined && hasClientColumn("contrat")) {
+      finalContrat = contrat || {};
+      updateFields.push(`contrat = $${paramIndex++}`);
+      updateValues.push(JSON.stringify(finalContrat));
+    }
+    
+    // Support de l'ancienne structure (modules) et de la nouvelle (options)
+    if ((options !== undefined || modules !== undefined) && hasClientColumn("options")) {
+      finalOptions = options || modules || {};
+      updateFields.push(`options = $${paramIndex++}`);
+      updateValues.push(JSON.stringify(finalOptions));
+    }
+    
+    // Nouveau : stocker les modules de monitoring dans v_b_clients.modules (JSONB)
+    if (modules_monitoring !== undefined && hasClientColumn("modules")) {
+      finalModulesMonitoring = modules_monitoring || {};
+      updateFields.push(`modules = $${paramIndex++}`);
+      updateValues.push(JSON.stringify(finalModulesMonitoring));
+    }
+
+    if (sites !== undefined && hasClientColumn("sites")) {
+      assertCommunitySitesLimit(sites || []);
+      updateFields.push(`sites = $${paramIndex++}`);
+      updateValues.push(JSON.stringify(sites || []));
+    }
+
+    if (office365_data !== undefined && hasClientColumn("office365_data")) {
+      updateFields.push(`office365_data = $${paramIndex++}`);
+      updateValues.push(typeof office365_data === 'object' ? JSON.stringify(office365_data) : office365_data);
+    }
+
+    paramIndex = appendClientSsidUpdate({
+      ssid,
+      ssids,
+      hasClientColumn,
+      updateFields,
+      updateValues,
+      paramIndex,
+    });
+
+    updateValues.push(req.params.id);
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: "Aucune donnée à mettre à jour" });
+    }
+
+    const updateQuery = `
+      UPDATE v_b_clients 
+      SET ${updateFields.join(', ')}
+      WHERE id = $${paramIndex}
+    `;
+    await pool.query(updateQuery, updateValues);
+
+      await logClientUpdate({
+        req,
+        updateFields,
+        valueMap: {
+          name,
+          client_number: resolvedClientNumber,
+          email,
+          phone,
+          address,
+          siret,
+          secteur,
+          commercial_id: commercialId,
+          contrat: finalContrat,
+          options: finalOptions,
+          modules_monitoring: finalModulesMonitoring,
+          sites,
+          office365_data,
+          ssid: ssids !== undefined ? ssids : ssid,
+        }
+      });
+
+    // Enregistrer le log de modification
+    try {
+      const userId = req.user?.id || req.user?.user_id || null;
+      let userName = 'Utilisateur inconnu';
+      if (userId) {
+        try {
+          const userIdStr = String(userId);
+          const userResult = await pool.query(
+            `SELECT email, username
+             FROM v_b_users
+             WHERE id::text = $1`,
+            [userIdStr]
+          );
+          if (userResult.rows.length > 0) {
+            const user = userResult.rows[0];
+            userName = user.email || user.username || 'Utilisateur inconnu';
+          }
+        } catch (userError) {
+          userName = req.user?.name || req.user?.username || req.user?.email || 'Utilisateur inconnu';
+        }
+      }
+
+      const action = `Modification du client`;
+      const details = JSON.stringify({
+        modifiedFields: updateFields.map(field => field.replace(' = $' + paramIndex + '::text', '').replace(' = $' + paramIndex, '')).filter(field => !field.includes('updated_at'))
+      });
+
+      await pool.query(
+        `INSERT INTO v_b_clients_m_logs
+         (client_id, equipment_family, equipment_name, equipment_id, user_id, user_name, action, details)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          req.params.id,
+          'client',
+          'Client général',
+          null,
+          userId,
+          userName,
+          action,
+          details
+        ]
+      );
+    } catch (logError) {
+      console.warn('Erreur lors de l\'enregistrement du log:', logError);
+      // Ne pas échouer la requête pour autant
+    }
+
+    invalidateClientsListCache();
+    const changedFieldNames = updateFields
+      .map((field) => String(field).split("=")[0]?.trim())
+      .filter(Boolean);
+    const changedFieldNamesWithFallback =
+      changedFieldNames.length > 0
+        ? changedFieldNames
+        : Object.keys(req.body || {})
+            .map((key) => String(key || "").trim())
+            .filter(Boolean);
+    const nextValueMapForNotification = {
+      name: name !== undefined ? name : previousClientSnapshot?.name ?? null,
+      email: email !== undefined ? email : previousClientSnapshot?.email ?? null,
+      phone: phone !== undefined ? phone : previousClientSnapshot?.phone ?? null,
+      address: address !== undefined ? address : previousClientSnapshot?.address ?? null,
+      siret: siret !== undefined ? siret : previousClientSnapshot?.siret ?? null,
+      secteur: secteur !== undefined ? secteur : previousClientSnapshot?.secteur ?? null,
+      commercial_id: commercialId !== undefined && commercialId !== "" ? commercialId : previousClientSnapshot?.commercial_id ?? null,
+      contrat: finalContrat !== undefined ? finalContrat : previousClientSnapshot?.contrat ?? null,
+      options: finalOptions !== undefined ? finalOptions : previousClientSnapshot?.options ?? null,
+      modules: finalModulesMonitoring !== undefined ? finalModulesMonitoring : previousClientSnapshot?.modules ?? null,
+      sites: sites !== undefined ? (sites || []) : previousClientSnapshot?.sites ?? null,
+      office365_data: office365_data !== undefined ? office365_data : previousClientSnapshot?.office365_data ?? null,
+    };
+    const notificationChanges = buildNotificationChanges(
+      previousClientSnapshot || {},
+      changedFieldNamesWithFallback,
+      nextValueMapForNotification
+    );
+
+    dispatchNotificationEvent({
+      source: "entreprise",
+      element: "updated",
+      enterpriseId: String(req.params.id || ""),
+      user: req.user,
+      context: {
+        entreprise: { id: String(req.params.id || ""), nom: name || previousClientSnapshot?.name || "" },
+        changedFields: changedFieldNamesWithFallback,
+        changes: notificationChanges,
+      },
+    }).catch(() => {});
+    if (changedFieldNamesWithFallback.includes("contrat")) {
+      dispatchNotificationEvent({
+        source: "entreprise",
+        element: "contract_info_updated",
+        enterpriseId: String(req.params.id || ""),
+        user: req.user,
+        context: {
+          entreprise: { id: String(req.params.id || ""), nom: name || previousClientSnapshot?.name || "" },
+          changedFields: changedFieldNamesWithFallback,
+          changes: notificationChanges,
+        },
+      }).catch(() => {});
+    }
+    if (changedFieldNamesWithFallback.includes("office365_data")) {
+      dispatchNotificationEvent({
+        source: "services",
+        element: "tenant_updated",
+        enterpriseId: String(req.params.id || ""),
+        user: req.user,
+        context: {
+          entreprise: { id: String(req.params.id || ""), nom: name || previousClientSnapshot?.name || "" },
+          changedFields: changedFieldNamesWithFallback,
+          changes: notificationChanges,
+        },
+      }).catch(() => {});
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// ❌ DELETE /:id — Suppression d'un client
+// ───────────────────────────────────────────────
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletionStatus = await getClientDeletionStatus(id);
+
+    if (!deletionStatus.deletable) {
+      return res.status(409).json({
+        error: "Suppression impossible : des éléments sont encore liés à cette entreprise.",
+        code: "CLIENT_HAS_DEPENDENCIES",
+        blockers: deletionStatus.blockers,
+        totalBlockers: deletionStatus.totalBlockers,
+      });
+    }
+
+    await pool.query('DELETE FROM v_b_clients WHERE id = $1', [id]);
+    invalidateClientsListCache();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
+  }
+});
+
+// ───────────────────────────────────────────────
+// 📦 Routes Modules (nécessitent authentification)
+// ───────────────────────────────────────────────
+// Ces routes sont montées sur /api/clients/modules dans server.js
+const modulesRouter = express.Router();
+modulesRouter.use(verifyJWT);
+
+const TABLES = {
+  internet: "v_b_clients_m_internet",
+  server: "v_b_clients_m_servers",
+  servers: "v_b_clients_m_servers",
+  stockage: "v_b_clients_m_stockage",
+  nas: "v_b_clients_m_stockage",
+  firewall: "v_b_clients_m_firewall",
+  switch: "v_b_clients_m_switch",
+  wifi: "v_b_clients_m_wifi",
+  "bornes-wifi": "v_b_clients_m_wifi",
+  alimentation: "v_b_clients_m_alimentation",
+  routeur: "v_b_clients_m_routeur",
+  toip: "v_b_clients_m_toip",
+  save: "v_b_clients_m_save",
+  antivirus: "v_b_clients_m_antivirus",
+  antispam: "v_b_clients_m_antispam",
+  ndd: "v_b_clients_m_ndd",
+  ssl: "v_b_clients_m_ssl",
+  licences: "v_b_clients_m_licences",
+  o365: "v_b_clients_m_o365",
+  ordinateurs: "v_b_clients_m_ordinateurs",
+  ordinateur: "v_b_clients_m_ordinateurs",
+};
+
+function resolveTable(family) {
+  const key = family?.toLowerCase();
+  return TABLES[key] || null;
+}
+
+// GET liste d'une famille
+modulesRouter.get('/:clientId/:family', async (req, res) => {
+  try {
+    const { clientId, family } = req.params;
+    const table = resolveTable(family);
+    if (!table) return res.status(400).json({ error: "Famille inconnue" });
+
+    const result = await pool.query(
+      `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
+       FROM ${table}
+       WHERE client_id = $1
+       ORDER BY id ASC`,
+      [clientId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// POST création
+modulesRouter.post('/:clientId/:family', async (req, res) => {
+  try {
+    const { clientId, family } = req.params;
+    const { item_key, name, data, is_active } = req.body || {};
+    const table = resolveTable(family);
+    if (!table) return res.status(400).json({ error: "Famille inconnue" });
+    if (!clientId) return res.status(400).json({ error: "clientId requis" });
+
+    const finalName = name || item_key || null;
+    const finalItemKey = item_key || name || null;
+
+    let result;
+    try {
+      if (finalName) {
+        result = await pool.query(
+          `INSERT INTO ${table} (client_id, item_key, name, data, is_active)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (client_id, name) DO UPDATE SET
+             item_key = EXCLUDED.item_key,
+             data = EXCLUDED.data,
+             is_active = EXCLUDED.is_active,
+             updated_at = NOW()
+           RETURNING *`,
+          [clientId, finalItemKey, finalName, data || null, is_active !== false]
+        );
+      } else if (finalItemKey) {
+        result = await pool.query(
+          `INSERT INTO ${table} (client_id, item_key, name, data, is_active)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (client_id, item_key) DO UPDATE SET
+             name = EXCLUDED.name,
+             data = EXCLUDED.data,
+             is_active = EXCLUDED.is_active,
+             updated_at = NOW()
+           RETURNING *`,
+          [clientId, finalItemKey, finalName, data || null, is_active !== false]
+        );
+      } else {
+        result = await pool.query(
+          `INSERT INTO ${table} (client_id, item_key, name, data, is_active)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING *`,
+          [clientId, finalItemKey, finalName, data || null, is_active !== false]
+        );
+      }
+    } catch (conflictErr) {
+      if (conflictErr.code === '42P10' || conflictErr.code === '42704' || conflictErr.message.includes('constraint')) {
+        result = await pool.query(
+          `INSERT INTO ${table} (client_id, item_key, name, data, is_active)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING *`,
+          [clientId, finalItemKey, finalName, data || null, is_active !== false]
+        );
+      } else {
+        throw conflictErr;
+      }
+    }
+    
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// GET logs d'un équipement
+modulesRouter.get('/:clientId/:family/:equipmentName/logs', async (req, res) => {
+  try {
+    const { clientId, family, equipmentName } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    const logQuery = buildEquipmentLogQuery({
+      clientId,
+      family,
+      equipmentName,
+      equipmentDbId: req.query.equipment_id ? String(req.query.equipment_id).trim() : null,
+      search: req.query.search,
+      category: req.query.category,
+    });
+
+    const result = await pool.query(
+      `SELECT 
+        id,
+        client_id,
+        equipment_family,
+        equipment_name,
+        equipment_id,
+        user_id,
+        user_name,
+        action,
+        details,
+        created_at
+       FROM v_b_clients_m_logs
+       WHERE ${logQuery.where}
+       ORDER BY created_at DESC
+       LIMIT $${logQuery.params.length + 1} OFFSET $${logQuery.params.length + 2}`,
+      [...logQuery.params, limit, offset]
+    );
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) as total
+       FROM v_b_clients_m_logs
+       WHERE ${logQuery.where}`,
+      logQuery.params
+    );
+
+    const total = parseInt(countResult.rows[0].total) || 0;
+
+    res.json({
+      logs: result.rows,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      filters: {
+        search: logQuery.search,
+        category: logQuery.category,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// DELETE — purge des logs d'un équipement
+modulesRouter.delete('/:clientId/:family/:equipmentName/logs', async (req, res) => {
+  try {
+    const { clientId, family, equipmentName } = req.params;
+
+    const logQuery = buildEquipmentLogQuery({
+      clientId,
+      family,
+      equipmentName,
+      equipmentDbId: req.query.equipment_id ? String(req.query.equipment_id).trim() : null,
+      search: req.query.search,
+      category: req.query.category,
+    });
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) as total
+       FROM v_b_clients_m_logs
+       WHERE ${logQuery.where}`,
+      logQuery.params
+    );
+    const logsDeleted = parseInt(countResult.rows[0].total) || 0;
+
+    if (logsDeleted > 0) {
+      await pool.query(
+        `DELETE FROM v_b_clients_m_logs
+         WHERE ${logQuery.where}`,
+        logQuery.params
+      );
+    }
+
+    res.json({
+      success: true,
+      logs_deleted: logsDeleted,
+      filters: {
+        search: logQuery.search,
+        category: logQuery.category,
+      },
+    });
+  } catch (err) {
+    console.error("[DELETE equipment logs]", err.message);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+async function resolveRequestUserName(req) {
+  const userId = req.user?.id || req.user?.user_id || null;
+  if (!userId) {
+    return {
+      userId: null,
+      userName: req.user?.name || req.user?.username || req.user?.email || "Utilisateur inconnu",
+    };
+  }
+  try {
+    const userResult = await pool.query(
+      `SELECT email, username FROM v_b_users WHERE id::text = $1`,
+      [String(userId)]
+    );
+    if (userResult.rows.length > 0) {
+      const user = userResult.rows[0];
+      return {
+        userId,
+        userName: user.email || user.username || "Utilisateur inconnu",
+      };
+    }
+  } catch {
+    // fallback ci-dessous
+  }
+  return {
+    userId,
+    userName: req.user?.name || req.user?.username || req.user?.email || "Utilisateur inconnu",
+  };
+}
+
+// POST — journaliser une action sur un équipement (connexion distante, etc.)
+modulesRouter.post('/:clientId/:family/:equipmentName/logs', async (req, res) => {
+  try {
+    const { clientId, family, equipmentName } = req.params;
+    const { action, details, equipment_id } = req.body || {};
+    if (!action || !String(action).trim()) {
+      return res.status(400).json({ error: "action requis" });
+    }
+
+    const decodedEquipmentName = decodeURIComponent(equipmentName);
+    const { userId, userName } = await resolveRequestUserName(req);
+
+    await pool.query(
+      `INSERT INTO v_b_clients_m_logs
+         (client_id, equipment_family, equipment_name, equipment_id, user_id, user_name, action, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        clientId,
+        family,
+        decodedEquipmentName,
+        equipment_id || null,
+        userId,
+        userName,
+        String(action).trim(),
+        details != null ? JSON.stringify(details) : null,
+      ]
+    );
+
+    res.status(201).json({ success: true });
+  } catch (err) {
+    console.error("[POST equipment logs]", err.message);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// PUT mise à jour
+modulesRouter.put('/:clientId/:family/:id', async (req, res) => {
+  try {
+    const { clientId, family, id } = req.params;
+    const { item_key, name, data, is_active } = req.body || {};
+    const table = resolveTable(family);
+    if (!table) return res.status(400).json({ error: "Famille inconnue" });
+
+    const oldResult = await pool.query(
+      `SELECT name, item_key, data FROM ${table}
+       WHERE id = $1 AND client_id = $2`,
+      [id, clientId]
+    );
+
+    if (oldResult.rows.length === 0) return res.status(404).json({ error: "Introuvable" });
+
+    const oldItem = oldResult.rows[0];
+    let oldData = oldItem.data;
+    if (oldData && typeof oldData === 'string') {
+      try { oldData = JSON.parse(oldData); } catch (e) { oldData = {}; }
+    }
+    oldData = oldData || {};
+    const newData = data || {};
+
+    // Pour les serveurs et le stockage (NAS/SAN), fusionner avec l'existant
+    // - Serveurs : s'assurer que role (tableau) est bien persisté
+    // - NAS : préserver les champs existants (dont quickConnect) si non envoyés
+    const dataToSave =
+      (family === 'servers' && typeof newData === 'object')
+        ? {
+            ...oldData,
+            ...newData,
+            role: Array.isArray(newData.role) ? newData.role : (Array.isArray(oldData.role) ? oldData.role : [])
+          }
+        : (family === 'nas' && typeof newData === 'object')
+          ? {
+              ...oldData,
+              ...newData
+            }
+          : ((family === 'ordinateurs' || family === 'ordinateur') && typeof newData === 'object')
+            ? {
+                ...oldData,
+                ...newData
+              }
+          : (data || null);
+
+    const result = await pool.query(
+      `UPDATE ${table}
+       SET item_key = $1,
+           name = $2,
+           data = $3,
+           is_active = $4,
+           updated_at = NOW()
+       WHERE id = $5 AND client_id = $6
+       RETURNING *`,
+      [item_key || name || null, name || item_key || null, dataToSave, is_active !== false, id, clientId]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ error: "Introuvable" });
+
+    const updatedItem = result.rows[0];
+    const equipmentName = name || item_key || oldItem.name || oldItem.item_key || updatedItem.name || updatedItem.item_key || '';
+
+    // Enregistrer le log de modification (code simplifié pour la concision)
+    try {
+      const userId = req.user?.id || req.user?.user_id || null;
+      let userName = 'Utilisateur inconnu';
+      if (userId) {
+        try {
+          const userIdStr = String(userId);
+          const userResult = await pool.query(
+            `SELECT email, username 
+             FROM v_b_users 
+             WHERE id::text = $1`,
+            [userIdStr]
+          );
+          if (userResult.rows.length > 0) {
+            const user = userResult.rows[0];
+            userName = user.email || user.username || 'Utilisateur inconnu';
+          }
+        } catch (userError) {
+          userName = req.user?.name || req.user?.username || req.user?.email || 'Utilisateur inconnu';
+        }
+      } else {
+        userName = req.user?.name || req.user?.username || req.user?.email || 'Utilisateur inconnu';
+      }
+      
+      const fieldNames = {
+        'nom': 'Nom', 'name': 'Nom', 'marque': 'Marque', 'fabricant': 'Fabricant',
+        'modele': 'Modèle', 'model': 'Modèle', 'numeroSerie': 'Numéro de série',
+        'numero_serie': 'Numéro de série', 'ip': 'Adresse IP', 'adresseMac': 'Adresse MAC',
+        'mac': 'Adresse MAC', 'site': 'Site', 'location': 'Site', 'emplacement': 'Site',
+        'processeur': 'Processeur', 'cpu': 'Processeur', 'vcpu': 'VCPU',
+        'memoire': 'Mémoire', 'ram': 'Mémoire', 'stockage': 'Stockage',
+        'systeme': 'Système d\'exploitation', 'os': 'Système d\'exploitation',
+        'vlan': 'VLAN', 'role': 'Rôle', 'expirationGarantie': 'Expiration garantie',
+        'garantie': 'Expiration garantie', 'nbDisquesActuels': 'Nombre de disques actuels',
+        'nbDisquesMax': 'Nombre de disques max', 'capacite': 'Capacité',
+        'raid': 'Configuration RAID', 'luns': 'LUNs', 'cassettesRDX': 'Cassettes RDX',
+        'numeroDisque': 'Numéro de disque', 'version': 'Version', 'firmware': 'Version',
+        'type': 'Type', 'typeServer': 'Type de serveur'
+      };
+
+      const getFieldLabel = (field) => {
+        return fieldNames[field] || field.charAt(0).toUpperCase() + field.slice(1);
+      };
+
+      const modifications = [];
+
+      if (oldItem.name !== (name || item_key)) {
+        modifications.push({
+          field: 'nom',
+          fieldLabel: 'Nom',
+          oldValue: oldItem.name || '',
+          newValue: name || item_key || ''
+        });
+      }
+      if (oldItem.item_key !== (item_key || name) && oldItem.item_key !== oldItem.name) {
+        modifications.push({
+          field: 'item_key',
+          fieldLabel: 'Clé',
+          oldValue: oldItem.item_key || '',
+          newValue: item_key || name || ''
+        });
+      }
+
+      for (const key of Object.keys(newData)) {
+        let oldValue = oldData[key];
+        
+        if (oldValue === undefined || oldValue === null || oldValue === '') {
+          if (key === 'marque') {
+            oldValue = oldData.fabricant || oldData.manufacturer;
+          } else if (key === 'modele') {
+            oldValue = oldData.model;
+          } else if (key === 'numeroSerie') {
+            oldValue = oldData.serial || oldData.serialNumber;
+          } else if (key === 'adresseMac') {
+            oldValue = oldData.mac || oldData.macAddress;
+          } else if (key === 'site') {
+            oldValue = oldData.location || oldData.emplacement;
+          } else if (key === 'processeur') {
+            oldValue = oldData.cpu || oldData.vcpu;
+          } else if (key === 'memoire') {
+            oldValue = oldData.ram || oldData.memory;
+          } else if (key === 'stockage') {
+            oldValue = oldData.storage;
+          } else if (key === 'systeme') {
+            oldValue = oldData.os;
+          } else if (key === 'expirationGarantie') {
+            oldValue = oldData.garantie;
+          } else if (key === 'version') {
+            oldValue = oldData.firmware;
+          }
+        }
+        
+        const newValue = newData[key];
+        
+        const normalizeValue = (val) => {
+          if (val === null || val === undefined) return null;
+          if (val === '') return null;
+          if (typeof val === 'string') {
+            const trimmed = val.trim();
+            return trimmed === '' ? null : trimmed;
+          }
+          if (Array.isArray(val)) {
+            if (val.length === 0) return null;
+            return val;
+          }
+          if (typeof val === 'object' && val !== null) {
+            const keys = Object.keys(val);
+            if (keys.length === 0) return null;
+            return val;
+          }
+          return val;
+        };
+        
+        const normalizedOld = normalizeValue(oldValue);
+        const normalizedNew = normalizeValue(newValue);
+        
+        let hasChanged = false;
+        
+        if (normalizedOld === null && normalizedNew === null) {
+          hasChanged = false;
+        } else if (normalizedOld === null || normalizedNew === null) {
+          hasChanged = true;
+        } else {
+          if (Array.isArray(normalizedOld) && Array.isArray(normalizedNew)) {
+            hasChanged = JSON.stringify(normalizedOld) !== JSON.stringify(normalizedNew);
+          } else if (typeof normalizedOld === 'object' && typeof normalizedNew === 'object') {
+            hasChanged = JSON.stringify(normalizedOld) !== JSON.stringify(normalizedNew);
+          } else {
+            hasChanged = normalizedOld !== normalizedNew;
+          }
+        }
+        
+        if (hasChanged) {
+          modifications.push({
+            field: key,
+            fieldLabel: getFieldLabel(key),
+            oldValue: oldValue,
+            newValue: newValue
+          });
+        }
+      }
+
+      for (const mod of modifications) {
+        const action = `Modification du champ ${mod.fieldLabel}`;
+        const oldVal = typeof mod.oldValue === 'object' ? JSON.stringify(mod.oldValue) : (mod.oldValue || '');
+        const newVal = typeof mod.newValue === 'object' ? JSON.stringify(mod.newValue) : (mod.newValue || '');
+
+        await pool.query(
+          `INSERT INTO v_b_clients_m_logs 
+           (client_id, equipment_family, equipment_name, equipment_id, user_id, user_name, action, details)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            clientId,
+            family,
+            equipmentName,
+            id,
+            userId,
+            userName,
+            action,
+            JSON.stringify({
+              field: mod.field,
+              fieldLabel: mod.fieldLabel,
+              oldValue: mod.oldValue,
+              newValue: mod.newValue
+            })
+          ]
+        );
+      }
+    } catch (logError) {
+    }
+
+    res.json(updatedItem);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// PATCH mapping CheckMK — Enregistrer le mapping sur le périphérique (identifié par client_id + nom)
+modulesRouter.patch('/:clientId/:family/checkmk-mapping', async (req, res) => {
+  try {
+    const { clientId, family } = req.params;
+    const { equipmentName, equipment_id, checkmk_host_name, checkmk_site, checkmk_service_name } = req.body || {};
+    const table = resolveTable(family);
+    if (!table) return res.status(400).json({ error: "Famille inconnue" });
+    if ((!equipmentName || !String(equipmentName).trim()) && !equipment_id) {
+      return res.status(400).json({ error: "equipmentName ou equipment_id requis" });
+    }
+
+    const hostName = checkmk_host_name && String(checkmk_host_name).trim() ? String(checkmk_host_name).trim() : null;
+    const siteVal = checkmk_site && String(checkmk_site).trim() ? String(checkmk_site).trim() : null;
+    const serviceVal = checkmk_service_name && String(checkmk_service_name).trim() ? String(checkmk_service_name).trim() : null;
+    const nameVal = equipmentName ? String(equipmentName).trim() : null;
+    const equipmentIdVal = equipment_id ? String(equipment_id).trim() : null;
+
+    const columnsResult = await pool.query(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = $1`,
+      [table]
+    );
+    const availableColumns = new Set(columnsResult.rows.map(r => r.column_name));
+    const hasCheckmkColumns =
+      availableColumns.has('checkmk_host_name') &&
+      availableColumns.has('checkmk_site') &&
+      availableColumns.has('checkmk_service_name');
+
+    const whereClause = equipmentIdVal
+      ? `client_id::text = $4::text AND id::text = $5::text`
+      : `client_id::text = $4::text AND (name = $5 OR item_key = $5 OR (data IS NOT NULL AND data::jsonb->>'nom' = $5))`;
+    const whereParams = equipmentIdVal ? [clientId, equipmentIdVal] : [clientId, nameVal];
+
+    let result;
+    if (hasCheckmkColumns) {
+      result = await pool.query(
+        `UPDATE ${table}
+         SET checkmk_host_name = $1::varchar,
+             checkmk_site = $2::varchar,
+             checkmk_service_name = $3::varchar,
+             data = COALESCE(data::jsonb, '{}'::jsonb) || jsonb_build_object(
+               'checkmk_host_name', to_jsonb($1::varchar),
+               'checkmk_site', to_jsonb($2::varchar),
+               'checkmk_service_name', to_jsonb($3::varchar)
+             ),
+             updated_at = NOW()
+         WHERE ${whereClause}
+         RETURNING id, checkmk_host_name, checkmk_site, checkmk_service_name`,
+        [hostName, siteVal, serviceVal, ...whereParams]
+      );
+    } else {
+      result = await pool.query(
+        `UPDATE ${table}
+         SET data = COALESCE(data::jsonb, '{}'::jsonb) || jsonb_build_object(
+               'checkmk_host_name', to_jsonb($1::varchar),
+               'checkmk_site', to_jsonb($2::varchar),
+               'checkmk_service_name', to_jsonb($3::varchar)
+             ),
+             updated_at = NOW()
+         WHERE ${whereClause}
+         RETURNING id,
+                   data::jsonb->>'checkmk_host_name' AS checkmk_host_name,
+                   data::jsonb->>'checkmk_site' AS checkmk_site,
+                   data::jsonb->>'checkmk_service_name' AS checkmk_service_name`,
+        [hostName, siteVal, serviceVal, ...whereParams]
+      );
+    }
+
+    if (result.rows.length === 0) {
+      if (equipmentIdVal) {
+        return res.status(404).json({ error: "Équipement introuvable", details: `Aucune ligne avec client_id=${clientId} et id=${equipmentIdVal} dans ${table}` });
+      }
+      return res.status(404).json({ error: "Équipement introuvable", details: `Aucune ligne avec client_id=${clientId} et nom="${nameVal}" dans ${table}` });
+    }
+
+    const mapping = result.rows[0];
+    res.json({
+      checkmk_host_name: mapping.checkmk_host_name,
+      checkmk_site: mapping.checkmk_site,
+      checkmk_service_name: mapping.checkmk_service_name,
+      is_active: true
+    });
+  } catch (err) {
+    console.error("Erreur PATCH checkmk-mapping:", err);
+    res.status(500).json({ error: "Erreur lors de la mise à jour du mapping CheckMK" });
+  }
+});
+
+// DELETE suppression
+modulesRouter.delete('/:clientId/:family/:id', async (req, res) => {
+  try {
+    const { clientId, family, id } = req.params;
+    const table = resolveTable(family);
+    if (!table) return res.status(400).json({ error: "Famille inconnue" });
+
+    const itemResult = await pool.query(
+      `SELECT name, item_key, data FROM ${table}
+       WHERE id = $1 AND client_id = $2`,
+      [id, clientId]
+    );
+
+    if (itemResult.rows.length === 0) return res.status(404).json({ error: "Introuvable" });
+
+    const item = itemResult.rows[0];
+    const possibleNames = [];
+    if (item.name) possibleNames.push(item.name);
+    if (item.item_key) possibleNames.push(item.item_key);
+    if (item.data?.nom) possibleNames.push(item.data.nom);
+
+    const result = await pool.query(
+      `DELETE FROM ${table}
+       WHERE id = $1 AND client_id = $2
+       RETURNING *`,
+      [id, clientId]
+    );
+
+    const familyToEquipmentType = {
+      'internet': 'Internet',
+      'servers': 'Serveurs',
+      'stockage': 'Stockage',
+      'firewall': 'Firewalls',
+      'switch': 'Switch',
+      'wifi': 'BorneWifi',
+      'alimentation': 'Alimentation',
+      'routeur': 'Routeur',
+      'toip': 'TOIP',
+      'save': 'Sauvegarde'
+    };
+    const equipmentType = familyToEquipmentType[family?.toLowerCase()];
+
+    // Supprimer le mapping CheckMK en utilisant l'equipment_id
+    if (equipmentType) {
+      try {
+        await pool.query(
+          `DELETE FROM v_b_clients_host_mapping 
+           WHERE client_id = $1 
+           AND equipment_type = $2 
+           AND equipment_id = $3`,
+          [clientId, equipmentType, id]
+        );
+      } catch (mappingErr) {
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// POST sync — Synchronisation complète
+modulesRouter.post('/:clientId/:family/sync', async (req, res) => {
+  try {
+    const { clientId, family } = req.params;
+    const { items } = req.body || {};
+    const table = resolveTable(family);
+    if (!table) return res.status(400).json({ error: "Famille inconnue" });
+    if (!clientId) return res.status(400).json({ error: "clientId requis" });
+    if (!Array.isArray(items)) return res.status(400).json({ error: "items doit être un tableau" });
+
+    const familyToEquipmentType = {
+      'internet': 'Internet',
+      'servers': 'Serveurs',
+      'stockage': 'Stockage',
+      'firewall': 'Firewalls',
+      'switch': 'Switch',
+      'wifi': 'BorneWifi',
+      'save': 'Sauvegarde'
+    };
+    const equipmentType = familyToEquipmentType[family?.toLowerCase()];
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const existingItemsResult = await client.query(
+        `SELECT name, item_key, data FROM ${table} WHERE client_id = $1`,
+        [clientId]
+      );
+      const existingNames = new Set();
+      existingItemsResult.rows.forEach(row => {
+        if (row.name) existingNames.add(row.name);
+        if (row.item_key) existingNames.add(row.item_key);
+        if (row.data?.nom) existingNames.add(row.data.nom);
+        if (row.data && typeof row.data === 'object') {
+          const dataName = row.data.name || row.data.nom || row.data.item_key;
+          if (dataName) existingNames.add(dataName);
+        }
+      });
+
+      let inserted = [];
+      let newNames = new Set();
+
+      if (family?.toLowerCase() === 'save' || family?.toLowerCase() === 'antispam') {
+        const existingIdsResult = await client.query(
+          `SELECT id FROM ${table} WHERE client_id = $1`,
+          [clientId]
+        );
+        const existingIds = new Set(existingIdsResult.rows.map(row => row.id.toString()));
+        
+        const processedIds = new Set();
+        
+        for (const item of items) {
+          const { id, item_key, name, data, is_active } = item;
+          const itemId = id ? id.toString() : null;
+          
+          const itemName = name || item_key || data?.nom || null;
+          if (itemName) newNames.add(itemName);
+          if (data && typeof data === 'object') {
+            const dataName = data.name || data.nom || data.item_key;
+            if (dataName) newNames.add(dataName);
+          }
+          
+          if (itemId && existingIds.has(itemId)) {
+            const result = await client.query(
+              `UPDATE ${table}
+               SET item_key = $1, name = $2, data = $3, is_active = $4, updated_at = NOW()
+               WHERE id = $5 AND client_id = $6
+               RETURNING *`,
+              [item_key || name || null, name || item_key || null, data || null, is_active !== false, itemId, clientId]
+            );
+            if (result.rows.length > 0) {
+              inserted.push(result.rows[0]);
+              processedIds.add(itemId);
+            }
+          } else {
+            const result = await client.query(
+              `INSERT INTO ${table} (client_id, item_key, name, data, is_active)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING *`,
+              [clientId, item_key || name || null, name || item_key || null, data || null, is_active !== false]
+            );
+            inserted.push(result.rows[0]);
+            if (result.rows[0].id) {
+              processedIds.add(result.rows[0].id.toString());
+            }
+          }
+        }
+        
+        const idsToDelete = Array.from(existingIds).filter(id => !processedIds.has(id));
+        if (idsToDelete.length > 0) {
+          await client.query(
+            `DELETE FROM ${table} WHERE id = ANY($1::uuid[]) AND client_id = $2`,
+            [idsToDelete, clientId]
+          );
+        }
+      } else {
+        // Pour les autres familles (internet, servers, firewall, switch, wifi, stockage, ndd)
+        // Utiliser la même logique que save/antispam pour préserver les IDs et les mappings
+        const existingIdsResult = await client.query(
+          `SELECT id FROM ${table} WHERE client_id = $1`,
+          [clientId]
+        );
+        const existingIds = new Set(existingIdsResult.rows.map(row => row.id.toString()));
+        
+        const processedIds = new Set();
+        
+        for (const item of items) {
+          const { id, item_key, name, data, is_active } = item;
+          const itemId = id ? id.toString() : null;
+          
+          const itemName = name || item_key || data?.nom || null;
+          if (itemName) newNames.add(itemName);
+          if (data && typeof data === 'object') {
+            const dataName = data.name || data.nom || data.item_key;
+            if (dataName) newNames.add(dataName);
+          }
+          
+          if (itemId && existingIds.has(itemId)) {
+            // Mettre à jour l'enregistrement existant (préserve l'ID)
+            const result = await client.query(
+              `UPDATE ${table}
+               SET item_key = $1, name = $2, data = $3, is_active = $4, updated_at = NOW()
+               WHERE id = $5 AND client_id = $6
+               RETURNING *`,
+              [item_key || name || null, name || item_key || null, data || null, is_active !== false, itemId, clientId]
+            );
+            if (result.rows.length > 0) {
+              inserted.push(result.rows[0]);
+              processedIds.add(itemId);
+            }
+          } else {
+            // Insérer un nouvel enregistrement
+            const result = await client.query(
+              `INSERT INTO ${table} (client_id, item_key, name, data, is_active)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING *`,
+              [clientId, item_key || name || null, name || item_key || null, data || null, is_active !== false]
+            );
+            inserted.push(result.rows[0]);
+            if (result.rows[0].id) {
+              processedIds.add(result.rows[0].id.toString());
+            }
+          }
+        }
+        
+        // Supprimer uniquement les IDs qui ne sont plus dans la nouvelle liste
+        const idsToDelete = Array.from(existingIds).filter(id => !processedIds.has(id));
+        if (idsToDelete.length > 0) {
+          await client.query(
+            `DELETE FROM ${table} WHERE id = ANY($1::uuid[]) AND client_id = $2`,
+            [idsToDelete, clientId]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+      res.json({ success: true, items: inserted, count: inserted.length });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+
+
+// ───────────────────────────────────────────────
+// 📋 ROUTES CONTACTS — GET, POST, PUT, DELETE
+// ───────────────────────────────────────────────
+
+// 📥 GET /contacts — Liste des contacts
+router.get('/contacts', async (req, res) => {
+  try {
+    const clientId = req.query.client_id;
+    let query = `
+      SELECT 
+        c.id,
+        c.nom,
+        c.prenom,
+        c.email,
+        c.telephone,
+        c.poste,
+        c.statut,
+        c.client_id,
+        cl.name as client_name,
+        c.created_at,
+        c.updated_at
+      FROM v_b_contacts c
+      LEFT JOIN v_b_clients cl ON c.client_id = cl.id
+    `;
+    let params = [];
+
+    if (clientId) {
+      query += ` WHERE c.client_id = $1`;
+      params.push(parseInt(clientId));
+    }
+
+    query += ` ORDER BY c.nom ASC, c.prenom ASC`;
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message });
+  }
+});
+
+// 📝 POST /contacts — Ajouter un contact
+router.post('/contacts', verifyJWT, async (req, res) => {
+  try {
+    await assertCommunityContactsLimit(1);
+    const { nom, prenom, email, telephone, poste, statut, client_id } = req.body;
+
+    if (!nom) {
+      return res.status(400).json({ error: "Le nom est obligatoire" });
+    }
+
+    const result = await pool.query(`
+      INSERT INTO v_b_contacts (nom, prenom, email, telephone, poste, statut, client_id, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING id, nom, prenom, email, telephone, poste, statut, client_id, created_at, updated_at
+    `, [nom, prenom || null, email || null, telephone || null, poste || null, statut || 'actif', client_id || null]);
+
+    const newContact = result.rows[0];
+    res.status(201).json(newContact);
+  } catch (err) {
+    if (err?.code?.startsWith("COMMUNITY_")) {
+      return sendCommunityLimitError(res, err);
+    }
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message });
+  }
+});
+
+// 📝 PUT /contacts/:id — Modifier un contact
+router.put('/contacts/:id', verifyJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nom, prenom, email, telephone, poste, statut, client_id } = req.body;
+
+    if (!nom) {
+      return res.status(400).json({ error: "Le nom est obligatoire" });
+    }
+
+    const result = await pool.query(`
+      UPDATE v_b_contacts
+      SET nom = $1, prenom = $2, email = $3, telephone = $4, poste = $5, statut = $6, client_id = $7, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $8
+      RETURNING id, nom, prenom, email, telephone, poste, statut, client_id, created_at, updated_at
+    `, [nom, prenom || null, email || null, telephone || null, poste || null, statut || 'actif', client_id || null, parseInt(id)]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Contact non trouvé" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message });
+  }
+});
+
+// 🗑️ DELETE /contacts/:id — Supprimer un contact
+router.delete('/contacts/:id', verifyJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(`
+      DELETE FROM v_b_contacts
+      WHERE id = $1
+      RETURNING id
+    `, [parseInt(id)]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Contact non trouvé" });
+    }
+
+    res.json({ success: true, message: "Contact supprimé" });
+  } catch (err) {
+    res.status(500).json({ error: "Erreur interne (SQL)", details: err.message });
+  }
+});
+
+// Exporter le router modules séparément pour être monté sur /api/clients/modules
+export const modulesRouterExport = modulesRouter;
+
+export default router;
