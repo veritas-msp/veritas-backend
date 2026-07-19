@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📧 Routes des Notifications Check MK
+// 📧 Routes Notifications Check MK
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -8,11 +8,11 @@ import verifyJWT from '../../../middleware/auth.js';
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 📧 Endpoint : Récupérer les informations de notifications pour un host
-// NOTE: Désactivé car les notifications ne sont pas accessibles via l'API REST Check MK
+// 📧 Endpoint: fetch notification information for a host
+// NOTE: Disabled because notifications are not accessible via the Check MK REST API
 // ───────────────────────────────────────────────
 router.get('/notifications/:hostName', verifyJWT, async (req, res) => {
-  // Retourner 0 notifications car l'API Check MK ne permet pas de récupérer les notifications réelles
+  // Return 0 notifications because the Check MK API cannot fetch real notifications
   res.json({ 
     host_name: req.params.hostName,
     events_count: 0,

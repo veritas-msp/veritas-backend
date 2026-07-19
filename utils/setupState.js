@@ -25,7 +25,7 @@ export function clearSetupCompleteMarker() {
       fs.unlinkSync(SETUP_COMPLETE_PATH);
     }
   } catch {
-    /* ignore */
+ /* ignore */
   }
 }
 
@@ -77,7 +77,7 @@ export async function hasCoreSchema() {
   }
 }
 
-/** Schéma de référence entièrement installé (tables + données initiales). */
+/** Reference schema fully installed (tables + initial data). */
 export async function hasReferenceSchemaInstalled() {
   try {
     const result = await pool.query(
@@ -112,7 +112,7 @@ async function getMigrationCount() {
   }
 }
 
-/** État détaillé de l'installation (toujours résolu, jamais d'exception). */
+/** Detailed installation state (always resolves, never throws). */
 export async function getSetupStatus() {
   if (isSetupMarkedComplete() && !(await isSetupFullyComplete())) {
     clearSetupCompleteMarker();
@@ -156,13 +156,13 @@ export async function getSetupStatus() {
   return { needsSetup, steps, migrationsApplied };
 }
 
-/** true tant que l'assistant d'installation n'est pas terminé (cron, jobs en arrière-plan). */
+/** true while the setup wizard is not finished (cron, background jobs). */
 export async function isInstallationInProgress() {
   const { needsSetup } = await getSetupStatus();
   return needsSetup;
 }
 
-/** Migrations incrémentielles au démarrage / à la demande — uniquement hors assistant /setup. */
+/** Incremental migrations on startup / on demand — only outside the /setup wizard. */
 export async function canRunAutoSchemaMigrations() {
   if (await isInstallationInProgress()) return false;
   return hasCoreSchema();

@@ -1,11 +1,11 @@
-/** Rate limiting en mémoire (par IP) — suffisant pour une instance self-hosted. */
+/** In-memory rate limiting (per IP) — sufficient for a self-hosted single instance. */
 
 const buckets = new Map();
 
 const isProduction = process.env.NODE_ENV === "production";
 
 function clientIp(req) {
-  // Express résout req.ip via trust proxy (server.js) — ne pas parser X-Forwarded-For manuellement.
+  // Express resolves req.ip via trust proxy (server.js) — do not parse X-Forwarded-For manually.
   const ip = req.ip || req.socket?.remoteAddress;
   if (ip) return ip;
   return "unknown";
@@ -81,7 +81,7 @@ export const rmmEnrollRateLimit = createRateLimiter({
   skipInDevelopment: false,
 });
 
-/** Routes wizard hors migrations (status, env, database, admin). */
+/** Setup wizard routes excluding migrations (status, env, database, admin). */
 export const setupRateLimit = createRateLimiter({
   name: "setup",
   windowMs: 60_000,
@@ -89,7 +89,7 @@ export const setupRateLimit = createRateLimiter({
   message: "Trop de requêtes sur l'assistant d'installation.",
 });
 
-/** Migrations pas à pas : jusqu'à ~80 tables + seeds en une minute. */
+/** Migration routes: up to ~80 tables + seeds per minute. */
 export const setupMigrateRateLimit = createRateLimiter({
   name: "setup-migrate",
   windowMs: 60_000,
@@ -98,7 +98,7 @@ export const setupMigrateRateLimit = createRateLimiter({
   skipInDevelopment: false,
 });
 
-/** Réinitialise les compteurs (tests / dépannage). */
+/** Resets counters (tests / troubleshooting). */
 export function resetRateLimitBuckets() {
   buckets.clear();
 }

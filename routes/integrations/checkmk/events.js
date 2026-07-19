@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📊 Routes des Événements Check MK
+// 📊 Check MK event routes
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -15,13 +15,13 @@ import {
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 📊 GET /api/checkmk/events/:hostName — Récupérer le nombre d'événements ouverts pour un host
+// 📊 GET /api/checkmk/events/:hostName — Fetch open event count for a host
 // ───────────────────────────────────────────────
 router.get('/events/:hostName', verifyJWT, async (req, res) => {
   try {
     const { hostName } = req.params;
     
-    // Récupérer les settings Check MK
+    // Fetch Check MK settings
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({ 
@@ -29,18 +29,18 @@ router.get('/events/:hostName', verifyJWT, async (req, res) => {
       });
     }
     
-    // Authentifier auprès de Check MK
+    // Authenticate with Check MK
     const authData = await authenticateCheckMK(
       settings.apiUrl,
       settings.username,
       settings.password
     );
     
-    // Construire l'URL de l'API Check MK pour les événements
+    // Build Check MK API URL for events
     const normalizedApiUrl = settings.apiUrl.replace(/\/+$/, '');
     const eventsUrl = `${normalizedApiUrl}/domain-types/event_console/collections/all`;
     
-    // Construire la requête pour récupérer les événements non-OK (state != '0') pour ce host
+    // Build the request to fetch non-OK events (state != '0') for this host
     const queryExpression = JSON.stringify({
       op: "and",
       expr: [
@@ -49,7 +49,7 @@ router.get('/events/:hostName', verifyJWT, async (req, res) => {
       ]
     });
     
-    // Construire l'URL avec les paramètres de requête
+    // Build the URL with query parameters
     const urlWithParams = new URL(eventsUrl);
     urlWithParams.searchParams.set('query', queryExpression);
     
@@ -63,7 +63,7 @@ router.get('/events/:hostName', verifyJWT, async (req, res) => {
       });
       
       if (!response.ok) {
-        // Si l'endpoint n'existe pas ou erreur, retourner 0 événements
+        // If the endpoint does not exist or errors, return 0 events
         if (response.status === 404) {
           return res.json({ 
             host_name: hostName,
@@ -83,7 +83,7 @@ router.get('/events/:hostName', verifyJWT, async (req, res) => {
       
       const data = await response.json();
       
-      // Extraire les événements de la réponse
+      // Extract events from the response
       let events = [];
       if (data.value && Array.isArray(data.value)) {
         events = data.value;
@@ -91,17 +91,17 @@ router.get('/events/:hostName', verifyJWT, async (req, res) => {
         events = data;
       }
       
-      // Filtrer les événements non-OK pour ce host
+      // Filter non-OK events for this host
       const filteredEvents = events.filter(event => {
         const eventHost = event.host || event.host_name || event.hostname;
         const eventState = event.state || event.state_type || event.state_num;
         
-        // Vérifier que c'est pour le bon host
+        // Verify this event belongs to the correct host
         if (eventHost && eventHost !== hostName) {
           return false;
         }
         
-        // Vérifier que l'état n'est pas OK (0)
+        // Skip OK state (0)
         if (eventState === 0 || eventState === '0' || eventState === 'ok' || eventState === 'OK') {
           return false;
         }
@@ -116,7 +116,7 @@ router.get('/events/:hostName', verifyJWT, async (req, res) => {
       });
       
     } catch (fetchError) {
-      // En cas d'erreur, retourner 0 événements plutôt qu'une erreur
+      // On error, return 0 events instead of failing
       return res.json({ 
         host_name: hostName,
         events_count: 0,
@@ -126,7 +126,7 @@ router.get('/events/:hostName', verifyJWT, async (req, res) => {
     }
     
   } catch (error) {
-    // En cas d'erreur, retourner 0 événements plutôt qu'une erreur
+    // On error, return 0 events rather than an error response
     res.json({ 
       host_name: req.params.hostName,
       events_count: 0,
@@ -137,7 +137,7 @@ router.get('/events/:hostName', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📊 GET /api/checkmk/host-events/:hostName — Récupérer les événements détaillés d'un host
+// 📊 GET /api/checkmk/host-events/:hostName — Fetch detailed events for a host
 // ───────────────────────────────────────────────
 router.get('/host-events/:hostName', verifyJWT, async (req, res) => {
   try {
@@ -236,7 +236,7 @@ router.get('/host-events/:hostName', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📊 GET /api/checkmk/events-period/:hostName — Récupérer le nombre d'événements sur une période via view.py
+// 📊 GET /api/checkmk/events-period/:hostName — Fetch event count over a period via view.py
 // ───────────────────────────────────────────────
 router.get('/events-period/:hostName', verifyJWT, async (req, res) => {
   try {
@@ -250,7 +250,7 @@ router.get('/events-period/:hostName', verifyJWT, async (req, res) => {
       });
     }
     
-    // Récupérer les settings Check MK
+    // Fetch Check MK settings
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({ 
@@ -258,7 +258,7 @@ router.get('/events-period/:hostName', verifyJWT, async (req, res) => {
       });
     }
     
-    // Extraire l'URL de base CheckMK
+    // Extract CheckMK base URL
     let baseUrl = settings.apiUrl;
     baseUrl = baseUrl.replace(/\/check_mk\/api\/1\.0\/?$/, '');
     baseUrl = baseUrl.replace(/\/check_mk\/api\/?$/, '');
@@ -269,7 +269,7 @@ router.get('/events-period/:hostName', verifyJWT, async (req, res) => {
     
     const logtimeFromDays = computeCheckMKLogtimeFromDays(start_time, end_time);
 
-    // Construire l'URL view.py
+    // Build the view.py URL
     const viewUrl = `${baseUrl}/check_mk/view.py`;
     
     const urlParams = new URLSearchParams({
@@ -280,14 +280,14 @@ router.get('/events-period/:hostName', verifyJWT, async (req, res) => {
       view_name: 'hostsvcevents'
     });
     
-    // Ajouter le site dans les paramètres si disponible
+    // Add site to query settings when available
     if (checkmkSite) {
       urlParams.append('site', checkmkSite);
     }
     
     const fullUrl = `${viewUrl}?${urlParams.toString()}`;
     
-    // Authentifier auprès de Check MK
+    // Authenticate with Check MK
     const authData = await authenticateCheckMK(
       settings.apiUrl,
       settings.username,
@@ -313,14 +313,14 @@ router.get('/events-period/:hostName', verifyJWT, async (req, res) => {
         });
       }
       
-      // La réponse peut être du JSON ou du texte
+      // Response may be JSON or plain text
       const contentType = response.headers.get('content-type');
       let data;
       
       if (contentType && contentType.includes('application/json')) {
         data = await response.json();
       } else {
-        // Si ce n'est pas du JSON, essayer de parser comme texte
+        // If this is not JSON, try parsing it as plain text
         const text = await response.text();
         try {
           data = JSON.parse(text);
@@ -334,7 +334,7 @@ router.get('/events-period/:hostName', verifyJWT, async (req, res) => {
         }
       }
       
-      // Extraire les événements de la réponse
+      // Extract events from the response
       let allEvents = [];
       if (Array.isArray(data)) {
         if (data.length > 0 && Array.isArray(data[0])) {
@@ -359,7 +359,7 @@ router.get('/events-period/:hostName', verifyJWT, async (req, res) => {
         }
       }
       
-      // Normaliser les événements : convertir tableaux en objets
+      // Normalize events: convert arrays into objects
       const normalizedEvents = allEvents.map((event, index) => {
         if (Array.isArray(event)) {
           const rawState = event[5];

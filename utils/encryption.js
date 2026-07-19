@@ -15,12 +15,12 @@ function resolveEncryptionKey() {
 const ENCRYPTION_KEY_FINAL = resolveEncryptionKey();
 const ALGORITHM = 'aes-256-gcm';
 
-/** Ancien dérivage (scrypt + sel statique) — conservé pour le déchiffrement des données existantes. */
+/** Legacy derivation (scrypt + static salt) — kept for decrypting existing data. */
 function deriveLegacyKey() {
   return crypto.scryptSync(ENCRYPTION_KEY_FINAL, 'salt', 32);
 }
 
-/** Dérivage actuel : SHA-256 de la clé maître (entropie suffisante, pas de sel statique). */
+/** Current derivation: SHA-256 of the master key (sufficient entropy, no static salt). */
 function deriveKey() {
   return crypto.createHash('sha256').update(ENCRYPTION_KEY_FINAL).digest();
 }
@@ -37,9 +37,9 @@ function decryptWithKey(encryptedText, ivHex, authTagHex, key) {
 }
 
 /**
- * Chiffre une valeur avec AES-256-GCM
- * @param {string} text - Texte à chiffrer
- * @returns {Object} Objet contenant le texte chiffré et l'IV
+ * Encrypts a value with AES-256-GCM
+ * @param {string} text - Plain text to encrypt
+ * @returns {Object} Object containing encrypted text and IV
  */
 export function encrypt(text) {
   if (!text) return null;
@@ -65,11 +65,11 @@ export function encrypt(text) {
 }
 
 /**
- * Déchiffre une valeur chiffrée avec AES-256-GCM
- * @param {string} encryptedText - Texte chiffré
- * @param {string} ivHex - IV en hexadécimal
- * @param {string} authTagHex - Authentication tag en hexadécimal
- * @returns {string} Texte déchiffré
+ * Decrypts an AES-256-GCM encrypted value
+ * @param {string} encryptedText - Encrypted text
+ * @param {string} ivHex - IV in hexadecimal
+ * @param {string} authTagHex - Authentication tag in hexadecimal
+ * @returns {string} Decrypted plain text
  */
 export function decrypt(encryptedText, ivHex, authTagHex) {
   if (!encryptedText || !ivHex || !authTagHex) return null;

@@ -49,7 +49,7 @@ function derivePortFromApiUrl(apiBaseUrl, fallback = 3001) {
   }
 }
 
-// GET /api/setup/status — État de l'installation (public)
+// GET /api/setup/status — Installation state (public)
 router.get("/status", async (_req, res) => {
   try {
     const status = await getSetupStatus();
@@ -62,7 +62,7 @@ router.get("/status", async (_req, res) => {
   }
 });
 
-// GET /api/setup/generate-secrets — Génère des secrets aléatoires
+// GET /api/setup/generate-secrets — Generate random secrets
 router.get("/generate-secrets", requireSetupIncomplete, (_req, res) => {
   res.json({
     jwtSecret: generateSecret(32),
@@ -70,7 +70,7 @@ router.get("/generate-secrets", requireSetupIncomplete, (_req, res) => {
   });
 });
 
-// POST /api/setup/env — Écrit les variables d'environnement essentielles
+// POST /api/setup/env — Write essential environment variables
 router.post(
   "/env",
   requireSetupIncomplete,
@@ -136,7 +136,7 @@ router.post(
   }
 );
 
-// POST /api/setup/database — Teste et enregistre la connexion PostgreSQL
+// POST /api/setup/database — Test and save PostgreSQL connection
 router.post(
   "/database",
   requireSetupIncomplete,
@@ -181,7 +181,7 @@ router.post(
       try {
         await saveDatabaseSettings({ db_host, db_port: String(db_port), db_user, db_password, db_name });
       } catch {
-        // La table v_b_settings n'existe pas encore — normal avant les migrations
+        // v_b_settings may not exist yet — normal before migrations
       }
 
       const status = await getSetupStatus();
@@ -216,12 +216,12 @@ async function finalizeMigrationsAfterRun() {
       });
       await reconfigureBootstrapPool(envUrl);
     } catch {
-      // Non bloquant
+      // Non-blocking
     }
   }
 }
 
-// GET /api/setup/migrations/pending — Progression des migrations (installation)
+// GET /api/setup/migrations/pending — Migration progress (installation)
 router.get("/migrations/pending", requireSetupIncomplete, async (_req, res) => {
   try {
     const progress = await getMigrationProgress();
@@ -235,7 +235,7 @@ router.get("/migrations/pending", requireSetupIncomplete, async (_req, res) => {
   }
 });
 
-// POST /api/setup/migrate — Applique les migrations (toutes ou une par une)
+// POST /api/setup/migrate — Apply migrations (all at once or one by one)
 router.post("/migrate", requireSetupIncomplete, async (req, res) => {
   try {
     const stepByStep =
@@ -301,7 +301,7 @@ async function getSetupAdminUser() {
   return rows[0] || null;
 }
 
-// POST /api/setup/admin — Crée le compte administrateur initial
+// POST /api/setup/admin — Create initial administrator account
 router.post(
   "/admin",
   requireSetupIncomplete,
@@ -377,7 +377,7 @@ router.post(
   }
 );
 
-// POST /api/setup/admin/mfa/setup — Génère le secret MFA pour l'admin initial
+// POST /api/setup/admin/mfa/setup — Generate MFA secret for initial admin
 router.post("/admin/mfa/setup", requireSetupIncomplete, async (_req, res) => {
   try {
     const user = await getSetupAdminUser();
@@ -410,7 +410,7 @@ router.post("/admin/mfa/setup", requireSetupIncomplete, async (_req, res) => {
   }
 });
 
-// POST /api/setup/admin/mfa/verify — Active le MFA et termine l'installation
+// POST /api/setup/admin/mfa/verify — Enable MFA and complete installation
 router.post(
   "/admin/mfa/verify",
   requireSetupIncomplete,

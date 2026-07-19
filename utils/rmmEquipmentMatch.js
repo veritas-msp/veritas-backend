@@ -77,8 +77,8 @@ export function getAgentEquipmentFamily(agent) {
 }
 
 /**
- * Cherche un équipement saisi manuellement (sans agent) à lier lors de l'enrôlement RMM.
- * Priorité : n° de série → adresse MAC → nom Veritas (si correspondance unique).
+ * Finds manually entered equipment (without agent) to link during RMM enrollment.
+ * Priority: serial number → MAC address → Veritas name (if uniquely matched).
  */
 export function findManualEquipmentMatch(rows, identifiers) {
   if (!Array.isArray(rows) || !rows.length) return null;

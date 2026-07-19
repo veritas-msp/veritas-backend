@@ -1,31 +1,32 @@
 // ───────────────────────────────────────────────
-// 📦 Imports principaux
+// 📦 Main imports
 // ───────────────────────────────────────────────
 import express from 'express';           // Framework HTTP
-import cors from 'cors';                 // Middleware pour autoriser les requêtes cross-origin
-import dotenv from 'dotenv';             // Chargement des variables d'environnement
+import cors from 'cors';                 // Middleware to allow cross-origin requests
+import dotenv from 'dotenv';             // Load environment variables
 import cookieParser from "cookie-parser";
-import os from 'os';                    // Utilitaires système (pour récupérer l'IP)
+import os from 'os';                    // System utilities (to get the IP)
 import { resetRateLimitBuckets } from './middleware/rateLimit.js';
-dotenv.config();                         // Active l'accès à process.env
+dotenv.config();                         // Enable process.env access
 if (process.env.NODE_ENV !== "production") {
   resetRateLimitBuckets();
 }
 
 // ───────────────────────────────────────────────
-// 🗄️ Base de données
+// 🗄️ Database
 // ───────────────────────────────────────────────
-import { pool, initDBConnection } from './database/db.js'; // Pool + init dynamique via la table `settings`
+import { pool, initDBConnection } from './database/db.js'; // Pool + dynamic init via the `settings` table
 import { runPostSetupSchemaMigrations } from './services/runPostSetupSchemaMigrations.js';
 
 // ───────────────────────────────────────────────
-// 📁 Import des routes (API REST)
+// 📁 Route imports (REST API)
 // ───────────────────────────────────────────────
 
-// ── 🔐 Authentification & Utilisateurs
+// ── 🔐 Authentication & Users
 import authRoutes from './routes/auth/auth.js';
 import userRoutes from './routes/auth/users.js';
 import profilesRouter from "./routes/auth/profiles.js";
+import permissionsRouter from "./routes/config/permissions.js";
 import teamsRoutes from "./routes/auth/teams.js";
 import userSettingsRoutes from './routes/auth/userSettings.js';
 
@@ -35,7 +36,7 @@ import campaignRoutes from './routes/clients/campaign.js';
 import materialTypesRoutes from './routes/clients/materialTypes.js';
 import contactsRoutes from './routes/clients/contacts.js';
 
-// ── 📄 Documents & Historique
+// ── 📄 Documents & History
 import monitoringDocumentsRouter from "./routes/documents/monitoringDocuments.js";
 import clientFilesRouter from "./routes/documents/clientFiles.js";
 import vaultSecretsRouter from "./routes/documents/vaultSecrets.js";
@@ -55,11 +56,11 @@ import setupRoutes from './routes/config/setup.js';
 import editionRoutes from './routes/config/edition.js';
 import licenseRoutes from './routes/config/license.js';
 import { requirePro, requireProAuth } from './middleware/edition.js';
-import { getEditionPayload, isPro } from './utils/edition.js';
+import { getEditionPayload } from './utils/edition.js';
 import { refreshProLicenseState, ensureFreshLicense } from './utils/proLicense.js';
 import verifyJWT from './middleware/auth.js';
 
-// ── 📊 Statistiques & Utilitaires
+// ── 📊 Statistics & utilities
 import statsRoutes from './routes/utils/stats.js';
 import techNewsRoutes from './routes/utils/techNews.js';
 import emailRoutes from "./routes/utils/email.js";
@@ -69,13 +70,14 @@ import eventsRoutes from './routes/utils/events.js';
 import ticketsRoutes from './routes/utils/tickets.js';
 import notificationsRoutes from './routes/utils/notifications.js';
 
-// ── 🔌 Intégrations Externes
+// ── 🔌 External Integrations
 import bitdefenderRouter from "./routes/integrations/bitdefender.js";
 import mailinblackRouter from "./routes/integrations/mailinblack.js";
 import rmmRouter from "./routes/rmm/rmm.js";
 import equipmentMonitoringAlertsRouter from "./routes/equipment/monitoringAlerts.js";
 import equipmentMetaRouter from "./routes/equipment/equipmentMeta.js";
 import supervisionAlertRulesRouter from "./routes/supervision/alertRules.js";
+import monitoringAutomationRouter from "./routes/supervision/monitoringAutomation.js";
 import checkmkRouter from "./routes/integrations/checkmk.js";
 import ovhRouter from "./routes/integrations/ovh.js";
 import partnerCenterRouter from "./routes/integrations/partnerCenter.js";
@@ -85,50 +87,28 @@ import whatsappRouter from "./routes/integrations/whatsapp/index.js";
 import office365ClientRouter from "./routes/clients/office365-client.js";
 import bitdefenderClientRouter from "./routes/clients/bitdefender-client.js";
 import mailinblackClientRouter from "./routes/clients/mailinblack-client.js";
+import aiRouter from "./routes/ai/index.js";
 
 import { checkMaintenanceMode } from './middleware/maintenance.js';
 import { securityHeaders } from './middleware/securityHeaders.js';
-import { canRunAutoSchemaMigrations, isSetupMarkedComplete, isInstallationInProgress } from './utils/setupState.js';
-import cron from 'node-cron';
-import { runSaveJobsSync } from './routes/integrations/checkmk/saveJobsSync.js';
-import { runNotificationSoonScheduler } from "./services/notificationDispatcher.js";
-import { syncAllRmmAgentOfflineStatus } from "./services/rmmOfflineSync.js";
-import { runEquipmentMonitoringAlertScan } from "./services/equipmentMonitoringAlertScan.js";
-import { autoCloseExpiredResolutionValidations } from "./services/ticketResolutionValidationService.js";
-import { loadMailCollectorsRaw } from "./services/ticketAutomationConfigStore.js";
-import { normalizeMailCollector, processMailCollector } from "./services/mailCollectorIngest.js";
+import { canRunAutoSchemaMigrations, isSetupMarkedComplete } from './utils/setupState.js';
 
 const app = express();
 
-const collectorRunLocks = new Set();
-
-async function processCollectorInbox(collectorInput) {
-  const collector = normalizeMailCollector(collectorInput, 0);
-  if (!collector.id || collectorRunLocks.has(collector.id)) return;
-  collectorRunLocks.add(collector.id);
-  try {
-    await processMailCollector(collector);
-  } catch (error) {
-    console.error(`[cron] Collector ${collector.id}:`, error.message);
-  } finally {
-    collectorRunLocks.delete(collector.id);
-  }
-}
-
 // ───────────────────────────────────────────────
-// 🔧 Configuration pour reverse proxy (HTTPS)
+// 🔧 Reverse proxy configuration (HTTPS)
 // ───────────────────────────────────────────────
-// Permet à Express de détecter correctement HTTPS via le reverse proxy
+// Lets Express correctly detect HTTPS via the reverse proxy
 app.set('trust proxy', true);
 
 // ───────────────────────────────────────────────
-// 🔧 Middlewares globaux
+// 🔧 Global middleware
 // ───────────────────────────────────────────────
 
-// Normalise une URL en enlevant les slashes finaux pour une comparaison cohérente
+// Normalize a URL by stripping trailing slashes for consistent comparison
 const normalizeOrigin = (url) => {
   if (!url) return url;
-  return url.replace(/\/+$/, ''); // Enlève tous les slashes finaux
+  return url.replace(/\/+$/, ''); // Strip all trailing slashes
 };
 
 const DEV_DEFAULT_ORIGINS = [
@@ -146,7 +126,7 @@ function isLocalDevOrigin(origin) {
   }
 }
 
-/** Lit ALLOWED_ORIGINS à chaque requête (réagit au wizard sans redémarrage). */
+/** Reads ALLOWED_ORIGINS on each request (reacts to wizard changes without restart). */
 function getAllowedOrigins() {
   const fromEnv = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
@@ -155,7 +135,7 @@ function getAllowedOrigins() {
 
   if (fromEnv.length > 0) return fromEnv;
 
-  // Premier démarrage : .env pas encore configuré par /setup
+  // First boot: .env not yet configured by /setup
   if (process.env.NODE_ENV !== 'production') {
     return DEV_DEFAULT_ORIGINS;
   }
@@ -165,8 +145,8 @@ function getAllowedOrigins() {
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Sans Origin : requêtes serveur-à-serveur ou same-origin (pas de CORS navigateur).
-    // En production, ne pas accorder d'en-têtes CORS permissifs (credentials + Origin absent).
+    // No Origin header: server-to-server or same-origin requests (no browser CORS).
+    // In production, do not grant permissive CORS headers (credentials + missing Origin).
     if (!origin) {
       callback(null, process.env.NODE_ENV !== "production");
       return;
@@ -180,7 +160,7 @@ const corsOptions = {
       return;
     }
 
-    // Pendant l'assistant d'installation, autoriser le frontend local
+    // During setup wizard, allow local frontend
     if (!isSetupMarkedComplete() && isLocalDevOrigin(normalizedOrigin)) {
       callback(null, true);
       return;
@@ -209,28 +189,28 @@ app.use((req, res, next) => {
   }
   return jsonBodyParser(req, res, next);
 });
-app.use(express.urlencoded({ extended: true, limit: "25mb" })); // Pour les formulaires encodés
+app.use(express.urlencoded({ extended: true, limit: "25mb" })); // For URL-encoded forms
 app.use(cookieParser());
 
 // ───────────────────────────────────────────────
-// 🔧 Middleware de maintenance (doit être après cookieParser)
+// 🔧 Maintenance middleware (must be after cookieParser)
 // ───────────────────────────────────────────────
 app.use(checkMaintenanceMode);
 
-// 📁 Assets login publics (page de connexion, avant authentification)
+// 📁 Public login assets (login page, before authentication)
 app.use('/uploads/login-branding', (req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'");
   next();
 }, express.static('uploads/login-branding'));
 
-// 📁 Sert les fichiers statiques depuis le dossier uploads
+// 📁 Serve static files from the uploads folder
 app.use('/uploads', verifyJWT, express.static('uploads'));
 
 // ───────────────────────────────────────────────
-// 🧠 Connexion à la base de données
+// 🧠 Database connection
 // ───────────────────────────────────────────────
-await initDBConnection(); // ⚙️ Tente une connexion dynamique via la table `settings` ; fallback `.env`
+await initDBConnection(); // ⚙️ Attempt a dynamic connection via the `settings` ; fallback `.env`
 if (await canRunAutoSchemaMigrations()) {
   try {
     await runPostSetupSchemaMigrations();
@@ -245,100 +225,10 @@ if (await canRunAutoSchemaMigrations()) {
 
 await refreshProLicenseState();
 
-// 🛠️ Assistant de première installation (accessible tant que needsSetup = true)
+// 🛠️ First-install wizard (available while needsSetup = true)
 app.use('/api/setup', setupRoutes);
 app.use('/api/edition', editionRoutes);
 app.use('/api/license', licenseRoutes);
-
-// ⏰ Job cron : sync des jobs de sauvegarde CheckMK (last_backup_date, last_backup_duration) — toutes les heures
-cron.schedule('0 * * * *', async () => {
-  if (await isInstallationInProgress()) return;
-  try {
-    const result = await runSaveJobsSync();
-    if (result.total > 0) {
-      console.log(`[cron] CheckMK backup job sync: ${result.updated}/${result.total} updated`);
-    }
-  } catch (error) {
-    console.error('[cron] CheckMK backup job sync:', error.message);
-  }
-});
-
-// Collecte des boîtes mail collecteurs (chaque minute).
-cron.schedule('* * * * *', async () => {
-  if (await isInstallationInProgress()) return;
-  try {
-    const collectors = await loadMailCollectorsRaw();
-    for (const collector of collectors) {
-      await processCollectorInbox(collector);
-    }
-  } catch (error) {
-    console.error('[cron] Mail collectors:', error.message);
-  }
-});
-
-// Vérification périodique des événements date-based (*_soon, *_reached, *_expired).
-cron.schedule('0 * * * *', async () => {
-  if (await isInstallationInProgress()) return;
-  try {
-    await runNotificationSoonScheduler();
-  } catch (error) {
-    console.error('[cron] Notifications date-based:', error.message);
-  }
-});
-
-// Statut hors ligne des agents RMM (ordinateurs) — toutes les 5 minutes.
-cron.schedule('*/5 * * * *', async () => {
-  if (await isInstallationInProgress()) return;
-  try {
-    const result = await syncAllRmmAgentOfflineStatus();
-    if (result.updated > 0) {
-      console.log(`[cron] RMM offline sync: ${result.updated}/${result.checked} computer(s) updated`);
-    }
-  } catch (error) {
-    console.error('[cron] RMM offline sync:', error.message);
-  }
-});
-
-// Validation périodique de la licence Pro — toutes les 15 minutes.
-cron.schedule('*/15 * * * *', async () => {
-  if (await isInstallationInProgress()) return;
-  try {
-    const before = isPro();
-    await refreshProLicenseState();
-    const after = isPro();
-    if (before !== after) {
-      console.log(`[cron] Pro license: edition ${after ? "pro" : "community"} (status ${after ? "active" : "revoked/expired"})`);
-    }
-  } catch (error) {
-    console.error('[cron] Licence Pro:', error.message);
-  }
-});
-
-// Scan alertes surveillance → tickets support — toutes les 5 minutes.
-cron.schedule('*/5 * * * *', async () => {
-  if (await isInstallationInProgress()) return;
-  try {
-    const result = await runEquipmentMonitoringAlertScan();
-    if (result.created > 0) {
-      console.log(`[cron] Monitoring alerts: ${result.created} ticket(s) created (${result.evaluated} evaluated)`);
-    }
-  } catch (error) {
-    console.error('[cron] Monitoring alerts:', error.message);
-  }
-});
-
-// Clôture auto des tickets résolus sans validation client sous 48 h — toutes les heures.
-cron.schedule('0 * * * *', async () => {
-  if (await isInstallationInProgress()) return;
-  try {
-    const result = await autoCloseExpiredResolutionValidations();
-    if (result.closed > 0) {
-      console.log(`[cron] Expired client validation: ${result.closed} ticket(s) closed automatically`);
-    }
-  } catch (error) {
-    console.error('[cron] Expired client validation:', error.message);
-  }
-});
 
 // ───────────────────────────────────────────────
 // 🚏 Routes API
@@ -354,23 +244,24 @@ app.use("/api", async (req, res, next) => {
   }
 });
 
-// ── 🔐 Authentification & Utilisateurs
-app.use('/api/auth', authRoutes);                      // Connexion / Mot de passe oublié
-app.use('/api/users', userRoutes);                     // Gestion des comptes utilisateurs
-app.use("/api/profiles", profilesRouter);              // Récupération des informations du profil utilisateur
-app.use("/api/teams", requireProAuth, teamsRoutes);                    // Gestion des équipes
-app.use('/api/user-settings', userSettingsRoutes);     // Paramètres utilisateur
+// ── 🔐 Authentication & Users
+app.use('/api/auth', authRoutes);                      // Login / Forgot password
+app.use('/api/users', userRoutes);                     // User account management
+app.use("/api/profiles", profilesRouter);              // Fetch user profile information
+app.use("/api/permissions", permissionsRouter);        // RBAC matrix: catalog, user rights, per-profile config
+app.use("/api/teams", requireProAuth, teamsRoutes);                    // Team management
+app.use('/api/user-settings', userSettingsRoutes);     // User settings
 
 // ── 👥 Clients & Modules
-app.use('/api/clients', campaignRoutes);               // Routes campagnes cybersécurité (doit être avant clientsRoutes)
-app.use('/api/clients', clientsRoutes);                // Gestion des clients (monitoring, général)
-app.use('/api/clients-general', clientsRoutes);        // Alias pour compatibilité
-app.use('/api/clients/modules', modulesRouterExport);  // Inventaire / modules équipements (Community + Pro)
-app.use('/api/material-types', materialTypesRoutes);   // Types personnalisés de matériels
-app.use('/api/contacts', contactsRoutes);              // Contacts clients
+app.use('/api/clients', campaignRoutes);               // Cybersecurity campaign routes (must be before clientsRoutes)
+app.use('/api/clients', clientsRoutes);                // Client management (monitoring, general)
+app.use('/api/clients-general', clientsRoutes);        // Compatibility alias
+app.use('/api/clients/modules', modulesRouterExport);  // Inventory / equipment modules (Community + Pro)
+app.use('/api/material-types', materialTypesRoutes);   // Custom material types
+app.use('/api/contacts', contactsRoutes);              // Client contacts
 
-// ── 📄 Documents & Historique
-app.use("/api/monitoring-documents", requireProAuth, monitoringDocumentsRouter); // Documents de monitoring dédiés
+// ── 📄 Documents & History
+app.use("/api/monitoring-documents", requireProAuth, monitoringDocumentsRouter); // Dedicated monitoring documents
 app.use("/api/client-files", requireProAuth, clientFilesRouter);
 app.use("/api/vault-secrets", requireProAuth, vaultSecretsRouter);
 app.use("/api/equipment-files", equipmentFilesRouter);
@@ -378,59 +269,58 @@ app.use("/api/client-portal", clientPortalRouter);
 app.use("/api/client-portal-users", clientPortalUsersRouter);
 
 // ── ⚙️ Configuration & Maintenance
-app.use('/api/settings', settingsRoutes);              // Lecture / écriture des paramètres globaux
-app.use('/api/general-settings', generalSettingsRoutes); // Langue, fuseau horaire, préférences globales
-app.use('/api/login-branding', loginBrandingRoutes); // Personnalisation page login (Pro)
-app.use('/api/sla-settings', slaSettingsRoutes); // Horaires support et mode de calcul SLA (Community + Pro)
-app.use('/api/contract-module-options', requireProAuth, contractModuleOptionsRoutes); // Options de contrat configurables
-app.use('/api/equipment-families', equipmentFamiliesRoutes); // Familles de matériel configurables
+app.use('/api/settings', settingsRoutes);              // Read / write global settings
+app.use('/api/general-settings', generalSettingsRoutes); // Language, timezone, global preferences
+app.use('/api/login-branding', loginBrandingRoutes); // Login page customization (Pro)
+app.use('/api/sla-settings', slaSettingsRoutes); // Support hours and SLA calculation mode (Community + Pro)
+app.use('/api/contract-module-options', requireProAuth, contractModuleOptionsRoutes); // Configurable contract options
+app.use('/api/equipment-families', equipmentFamiliesRoutes); // Configurable equipment families
 app.use('/api/maintenance', maintenanceRoutes);       // Maintenance IT events
 
-// ── 📊 Statistiques & Utilitaires
-app.use("/api/stats", statsRoutes);                    // Statistiques globales (page d'accueil, etc.)
-app.use("/api/tech-news", techNewsRoutes);             // Fil d'actualités tech / CVE (accueil)
-app.use("/api/email", requireProAuth, emailRoutes);                    // Envoi de rapports par email
-app.use("/api/events", requireProAuth, eventsRoutes);                   // Gestion des événements du planning
-app.use("/api/tickets", ticketsRoutes);                 // Gestion du ticketing natif
+// ── 📊 Statistics & utilities
+app.use("/api/stats", statsRoutes);                    // Global statistics (home page, etc.)
+app.use("/api/tech-news", techNewsRoutes);             // Tech news / CVE feed (home)
+app.use("/api/email", requireProAuth, emailRoutes);                    // Email report delivery
+app.use("/api/events", requireProAuth, eventsRoutes);                   // Management events planning
+app.use("/api/tickets", ticketsRoutes);                 // Management ticketing natif
 app.use("/api/notifications", notificationsRoutes);     // Notifications in-app agents
-app.use("/api/rmm", rmmRouter);                        // Agents RMM (avant testsRoutes qui capture /api/*)
-app.use("/rmm", rmmRouter);                            // Compatibilité URL sans préfixe /api
-app.use("/api", testsRoutes);                          // Endpoints de test et vérification
-app.use("/api", supportReportRoutes);                  // Demandes de support utilisateur
+app.use("/api/rmm", rmmRouter);                        // Agents RMM (before testsRoutes that capture /api/*)
+app.use("/rmm", rmmRouter);                            // Compatibility URL without /api prefix
+app.use("/api", testsRoutes);                          // Test and verification endpoints
+app.use("/api", supportReportRoutes);                  // User support request
 
-// ── 🔌 Intégrations Externes
-app.use("/api/bitdefender", bitdefenderRouter);        // Intégration BitDefender GravityZone (Community + Pro)
-app.use("/api/mailinblack", mailinblackRouter);       // Intégration Mailinblack Protect (Community + Pro)
+// ── 🔌 External Integrations
+app.use("/api/bitdefender", bitdefenderRouter);        // Integration BitDefender GravityZo(Community + Pro)
+app.use("/api/mailinblack", mailinblackRouter);       // Integration Mailinblack Protect (Community + Pro)
 app.use("/api/equipment-monitoring-alerts", equipmentMonitoringAlertsRouter);
 app.use("/api/equipment", equipmentMetaRouter);
 app.use("/api/supervision/alert-rules", supervisionAlertRulesRouter);
-app.use("/api/checkmk", checkmkRouter);                // Surveillance CheckMK (Community + Pro)
-app.use("/api/unifi", requireProAuth, unifiEquipmentRouter);           // API UniFi par équipement (UDM Pro)
-app.use("/api/ovh", ovhRouter);                        // Intégration OVH (Community + Pro)
-app.use("/api/partner-center", requireProAuth, partnerCenterRouter);  // Intégration Microsoft Partner Center
-app.use("/api/office365", verifyJWT, office365Router);            // Intégration Microsoft Graph API pour Office 365
-app.use("/api/whatsapp", requirePro, whatsappRouter);              // Webhook Meta public ; test JWT dans le routeur
-app.use("/api/client-office365", verifyJWT, office365ClientRouter); // Gestion des credentials Office 365 par client
-app.use("/api/client-bitdefender", bitdefenderClientRouter); // Tenants Bitdefender dédiés par client
-app.use("/api/client-mailinblack", mailinblackClientRouter); // Tenants Mailinblack dédiés par client
+app.use("/api/supervision/monitoring-automation", monitoringAutomationRouter);
+app.use("/api/checkmk", checkmkRouter);                // Monitoring CheckMK (Community + Pro)
+app.use("/api/unifi", requireProAuth, unifiEquipmentRouter);           // UniFi API per team (UDM Pro)
+app.use("/api/ovh", ovhRouter);                        // Integration OVH (Community + Pro)
+app.use("/api/partner-center", requireProAuth, partnerCenterRouter);  // Integration Microsoft Partner Center
+app.use("/api/office365", verifyJWT, office365Router);            // Microsoft Graph API integration for Office 365
+app.use("/api/whatsapp", requirePro, whatsappRouter);              // Public Meta webhook; JWT enforced in router
+app.use("/api/ai", aiRouter);                                      // Copilote IA (settings Admin Interconnexions)
+app.use("/api/client-office365", verifyJWT, office365ClientRouter); // Per-client Office 365 credential management
+app.use("/api/client-bitdefender", bitdefenderClientRouter); // Per-client Bitdefender tenants
+app.use("/api/client-mailinblack", mailinblackClientRouter); // Per-client Mailinblack tenants
 
 // ───────────────────────────────────────────────
-// 🔄 Routes de compatibilité (pour reverse proxy qui enlève /api)
-// Ces routes permettent d'accéder aux endpoints avec ou sans le préfixe /api
+// Compatibility route aliases (legacy paths without /api prefix)
 // ───────────────────────────────────────────────
-app.use("/maintenance", maintenanceRoutes);       // Compatibilité: /maintenance/* → /api/maintenance/*
-app.use("/auth", authRoutes);                    // Compatibilité: /auth/* → /api/auth/*
-app.use("/users", userRoutes);                    // Compatibilité: /users/* → /api/users/*
-app.use("/profiles", profilesRouter);             // Compatibilité: /profiles/* → /api/profiles/*
-app.use("/teams", requireProAuth, teamsRoutes);                   // Compatibilité: /teams/* → /api/teams/*
-app.use("/", testsRoutes);                        // Compatibilité: /status, /db-status → /api/status, /api/db-status
+app.use("/maintenance", maintenanceRoutes);       // Compatibility: /maintenance/* → /api/maintenance/*
+app.use("/auth", authRoutes);                    // Compatibility: /auth/* → /api/auth/*
+app.use("/users", userRoutes);                    // Compatibility: /users/* → /api/users/*
+app.use("/profiles", profilesRouter);             // Compatibility: /profiles/* → /api/profiles/*
+app.use("/teams", requireProAuth, teamsRoutes);                   // Compatibility: /teams/* → /api/teams/*
+app.use("/", testsRoutes);                        // Compatibility: /status, /db-status → /api/status, /api/db-status
 
 // ───────────────────────────────────────────────
-// 🏥 Health check endpoints (pour Docker/Kubernetes)
+// 🏥 Health check endpoints (for Docker/Kubernetes)
 // ───────────────────────────────────────────────
 
-// Endpoint "liveness" : vérifie uniquement que le serveur répond
-// Utilisé par le healthcheck Docker pour savoir si le container est démarré
 app.get('/health/live', (req, res) => {
   res.status(200).json({ 
     status: 'alive', 
@@ -438,11 +328,9 @@ app.get('/health/live', (req, res) => {
   });
 });
 
-// Endpoint "readiness" : vérifie que le serveur ET la base de données sont prêts
-// Utilisé pour les tests complets de santé de l'application
 app.get('/health', async (req, res) => {
   try {
-    // Vérifie la connexion à la base de données
+    // Verify database connectivity
     await pool.query('SELECT 1');
     res.status(200).json({ 
       status: 'healthy', 
@@ -460,7 +348,7 @@ app.get('/health', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔍 Route pour /api (évite l'erreur "cannot GET /")
+// 📋 API root info endpoint
 // ───────────────────────────────────────────────
 app.get('/api', (req, res) => {
   res.json({ 
@@ -486,16 +374,16 @@ app.use((err, req, res, next) => {
 });
 
 // ───────────────────────────────────────────────
-// 🚀 Lancement du serveur
+// 🚀 Start the server
 // ───────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 
-// Fonction pour récupérer toutes les IPs disponibles
+// Get all available IPs
 function getServerIPs() {
   const interfaces = os.networkInterfaces();
   const ips = ['localhost'];
   
-  // Récupérer toutes les IPs IPv4 non-localhost
+  // Collect all non-localhost IPv4 addresses
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
       if (iface.family === 'IPv4' && !iface.internal) {
@@ -507,7 +395,7 @@ function getServerIPs() {
   return ips;
 }
 
-// Détermine le protocole (http ou https)
+// Determine protocol (http or https)
 const PROTOCOL = process.env.PROTOCOL || 'http';
 const SERVER_IPS = getServerIPs();
 

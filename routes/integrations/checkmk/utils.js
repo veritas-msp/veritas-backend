@@ -1,26 +1,26 @@
 // ───────────────────────────────────────────────
-// 🔧 Fonctions utilitaires Check MK
+// 🔧 Check MK utility functions
 // ───────────────────────────────────────────────
 
 import fetch from 'node-fetch';
 import { getSettingsMap } from '../../../utils/settingsHelper.js';
 
 // ───────────────────────────────────────────────
-// 🔧 Fonction utilitaire : Extraire une valeur de performance depuis les données
+// 🔧 Utility function: extract a performance value from data
 // ───────────────────────────────────────────────
 export function extractPerformanceValue(performanceData, pluginOutput) {
   if (!performanceData && !pluginOutput) return null;
   
-  // Essayer d'extraire depuis performance_data (format Check MK standard)
+  // Try extracting from performance_data (standard Check MK format)
   if (performanceData) {
     const perfStr = String(performanceData);
     
-    // Format typique: "cpu=85%;90;95" ou "mem=2.5GB;4;8" ou "85%"
-    // Chercher plusieurs patterns
+    // Typical format: "cpu=85%;90;95" or "mem=2.5GB;4;8" or "85%"
+    // Try several patterns
     const patterns = [
       /(\d+(?:\.\d+)?)\s*(%|GB|MB|KB|ms|s)/i,  // Pattern standard
       /=\s*(\d+(?:\.\d+)?)\s*(%|GB|MB|KB)/i,   // Format "key=value unit"
-      /(\d+(?:\.\d+)?)\s*%/i                    // Juste un pourcentage
+      /(\d+(?:\.\d+)?)\s*%/i                    // Percentage only
     ];
     
     for (const pattern of patterns) {
@@ -35,10 +35,10 @@ export function extractPerformanceValue(performanceData, pluginOutput) {
     }
   }
   
-  // Essayer d'extraire depuis plugin_output
+  // Try extracting from plugin_output
   if (pluginOutput) {
     const output = String(pluginOutput);
-    // Chercher des patterns comme "85%", "2.5GB", "CPU: 45%", etc.
+    // Look for patterns like "85%", "2.5GB", "CPU: 45%", etc.
     const patterns = [
       /(\d+(?:\.\d+)?)\s*(%|GB|MB|KB|ms|s)/i,
       /:\s*(\d+(?:\.\d+)?)\s*(%|GB|MB|KB)/i,
@@ -63,7 +63,7 @@ export function extractPerformanceValue(performanceData, pluginOutput) {
 }
 
 // ───────────────────────────────────────────────
-// 🔧 Fonction utilitaire : Récupérer les settings Check MK
+// 🔧 Utility function: fetch Check MK settings
 // ───────────────────────────────────────────────
 export async function getCheckMKSettings() {
   try {
@@ -74,7 +74,7 @@ export async function getCheckMKSettings() {
       'CHECKMK_SITE'
     ]);
     
-    // Normaliser l'URL de l'API (enlever les slashes finaux s'ils existent)
+    // Normalize the API URL (remove trailing slashes if present)
     let apiUrl = (settings.CHECKMK_API_URL || '').trim();
     while (apiUrl && apiUrl.endsWith('/')) {
       apiUrl = apiUrl.slice(0, -1);
@@ -92,7 +92,7 @@ export async function getCheckMKSettings() {
 }
 
 // ───────────────────────────────────────────────
-// 🔐 Fonction utilitaire : Authentification Check MK
+// 🔐 Utility function: Check MK authentication
 // ───────────────────────────────────────────────
 export async function authenticateCheckMK(apiUrl, username, password) {
   try {
@@ -100,11 +100,11 @@ export async function authenticateCheckMK(apiUrl, username, password) {
       throw new Error('URL, nom d\'utilisateur et mot de passe requis');
     }
     
-    // Check MK REST API v1.0 utilise l'authentification Bearer avec format "username password"
-    // Format qui fonctionne: Authorization: Bearer username password (sans guillemets)
+    // Check MK REST API v1.0 uses Bearer authentication with the "username password" format
+    // Working format: Authorization: Bearer username password (without quotes)
     const authHeader = `Bearer ${username} ${password}`;
     
-    // Tester la connexion avec un endpoint simple pour vérifier les credentials
+    // Test the connection with a simple endpoint to verify credentials
     const testUrl = `${apiUrl}/version`;
     
     let testResponse;
@@ -120,7 +120,7 @@ export async function authenticateCheckMK(apiUrl, username, password) {
       throw new Error(`Impossible de se connecter à Check MK: ${fetchError.message}`);
     }
 
-    // Si la connexion fonctionne (200) ou endpoint inexistant (404), l'auth fonctionne
+    // If the connection works (200) or the endpoint is missing (404), auth succeeded
     if (testResponse.ok || testResponse.status === 404) {
       return {
         auth_token: authHeader,
@@ -129,14 +129,14 @@ export async function authenticateCheckMK(apiUrl, username, password) {
       };
     }
 
-    // Si erreur 401, les credentials sont invalides
+    // On 401, credentials are invalid
     if (testResponse.status === 401 || testResponse.status === 403) {
       const errorText = await testResponse.text().catch(() => '');
       throw new Error(`Identifiants Check MK invalides (${testResponse.status}): ${errorText.substring(0, 200)}`);
     }
 
-    // Pour d'autres erreurs, on retourne quand même l'auth (peut-être que /version n'existe pas)
-    // mais on log l'erreur
+    // For other errors, still return the same auth (maybe /version does not exist)
+    // but log the error
     
     return {
       auth_token: authHeader,
@@ -144,13 +144,13 @@ export async function authenticateCheckMK(apiUrl, username, password) {
       auth_header: authHeader
     };
   } catch (error) {
-    // Re-lancer l'erreur pour que l'appelant puisse la gérer
+    // Rethrow the error so the caller can handle it
     throw error;
   }
 }
 
 // ───────────────────────────────────────────────
-// 📋 Fonction utilitaire : Récupérer les services d'un host
+// 📋 Utility function: fetch services for a host
 // ───────────────────────────────────────────────
 export async function getHostServices(apiUrl, authToken, hostName, site = '') {
   try {
@@ -414,12 +414,12 @@ export async function getHostServices(apiUrl, authToken, hostName, site = '') {
 
     return [];
   } catch (error) {
-    // Retourner un tableau vide en cas d'erreur
+    // Return an empty array on error
     return [];
   }
 }
 
-// Noms de colonnes possibles pour view.py json_export (selon version/langue CheckMK)
+// Possible column names for view.py json_export (depends on CheckMK version/language)
 const VIEW_PY_PLUGIN_OUTPUT_HEADERS = ['svc_plugin_output', 'Plugin output', 'Plugin Output', 'Service plugin output'];
 const VIEW_PY_LONG_PLUGIN_HEADERS = ['svc_long_plugin_output', 'Long plugin output', 'Long Plugin Output'];
 const VIEW_PY_PERF_HEADERS = ['svc_perf_data', 'Perf data', 'Performance data', 'svc_performance_data'];
@@ -434,16 +434,16 @@ function findHeaderIndex(headers, candidates) {
 }
 
 // ───────────────────────────────────────────────
-// 📋 Récupérer plugin_output / perf_data via view.py (même méthode que GET service-data)
-// Utilisé pour les jobs Veeam où la liste d’API ne renvoie pas toujours le détail.
-// serviceName: nom du service (sans préfixe host:).
-// Retourne { pluginOutput, longPluginOutput, performanceData } ou null.
+// 📋 Fetch plugin_output / perf_data via view.py (same method as GET service-data)
+// Used for Veeam jobs where the API list does not always return details.
+// serviceName: service name (without the host: prefix).
+// Returns { pluginOutput, longPluginOutput, performanceData } or null.
 // ───────────────────────────────────────────────
 export async function getServicePluginOutputViaViewPy(apiUrl, authHeader, hostName, serviceName, site = '') {
   try {
     const rawServiceName = (serviceName || '').trim();
     if (!rawServiceName) return null;
-    // Retirer le préfixe "hostname:" comme dans GET service-data
+    // Strip the "hostname:" prefix as in GET service-data
     const serviceForView = rawServiceName.includes(':')
       ? rawServiceName.replace(/^[^:]+:\s*/, '').trim()
       : rawServiceName;
@@ -490,11 +490,11 @@ export async function getServicePluginOutputViaViewPy(apiUrl, authHeader, hostNa
   }
 }
 
-// 📊 Fonction utilitaire : Calculer les statistiques de disponibilité à partir de l'historique des événements
+// 📊 Utility function: compute availability statistics from event history
 // ───────────────────────────────────────────────
 export async function calculateAvailabilityFromHistory(apiUrl, authToken, hostName, services, startTime, endTime, site = '') {
   try {
-    // Endpoints possibles pour récupérer l'historique des événements/états
+    // Possible endpoints to fetch event/state history
     const possibleEndpoints = [
       `${apiUrl}/domain-types/event/collections/all`,
       `${apiUrl}/objects/host/${encodeURIComponent(hostName)}/collections/events`,
@@ -504,13 +504,13 @@ export async function calculateAvailabilityFromHistory(apiUrl, authToken, hostNa
     
     const startDate = new Date(startTime);
     const endDate = new Date(endTime);
-    const totalDuration = endDate - startDate; // Durée totale en millisecondes
+    const totalDuration = endDate - startDate; // Total duration in milliseconds
     
     if (totalDuration <= 0) {
       return null;
     }
     
-    // Essayer de récupérer l'historique des événements
+    // Try to fetch event history
     let events = null;
     let lastError;
     
@@ -552,17 +552,17 @@ export async function calculateAvailabilityFromHistory(apiUrl, authToken, hostNa
       return null;
     }
     
-    // Calculer les statistiques par service
+    // Compute per-service statistics
     const availability = {};
     
-    // Services à mapper : CPU utilization, Filesystem C:/, Memory, Uptime
+    // Services to map: CPU utilization, Filesystem C:/, Memory, Uptime
     const serviceNames = services.map(s => s.id || s.title || s).filter(Boolean);
     
-    // Si aucun événement global, essayer de récupérer l'historique par service individuellement
+    // If there are no global events, try fetching history per service individually
     if (!events || events.length === 0) {
       
       for (const serviceName of serviceNames) {
-        // Endpoints possibles pour l'historique d'un service spécifique
+        // Possible endpoints for a specific service history
         const serviceHistoryEndpoints = [
           `${apiUrl}/objects/host/${encodeURIComponent(hostName)}/collections/services/${encodeURIComponent(serviceName)}/collections/state_history`,
           `${apiUrl}/objects/service/${encodeURIComponent(hostName)}/${encodeURIComponent(serviceName)}/collections/state_history`,
@@ -592,17 +592,17 @@ export async function calculateAvailabilityFromHistory(apiUrl, authToken, hostNa
               const data = await response.json();
               const serviceHistory = data.value || data.items || data || [];
               if (Array.isArray(serviceHistory) && serviceHistory.length > 0) {
-                // Ajouter ces événements à la liste globale
+                // Add these events to the global list
                 if (!events) events = [];
                 serviceHistory.forEach(event => {
                   event.service_name = serviceName;
                 });
                 events.push(...serviceHistory);
-                break; // Passer au service suivant
+                break; // Move on to the next service
               }
             }
           } catch (fetchError) {
-            // Continuer avec le prochain endpoint
+            // Continue with the next endpoint
             continue;
           }
         }
@@ -614,20 +614,20 @@ export async function calculateAvailabilityFromHistory(apiUrl, authToken, hostNa
     }
     
     for (const serviceName of serviceNames) {
-      // Filtrer les événements pour ce service
+      // Filter events for this service
       const serviceEvents = events.filter(event => {
         const eventService = event.service || event.service_name || event.service_description || event.service_display_name;
         const normalizedEventService = eventService ? String(eventService).trim() : '';
         const normalizedServiceName = String(serviceName).trim();
         
-        // Correspondance exacte
+        // Exact match
         if (normalizedEventService === normalizedServiceName) return true;
         
-        // Correspondance avec variations
+        // Match with variations
         if (normalizedEventService === normalizedServiceName.replace('Filesystem ', '')) return true;
         if (normalizedEventService.replace('Filesystem ', '') === normalizedServiceName) return true;
         
-        // Correspondance partielle (pour gérer les variations de casse/espaces)
+        // Partial match (to handle case/whitespace variations)
         if (normalizedEventService.toLowerCase() === normalizedServiceName.toLowerCase()) return true;
         
         return false;
@@ -638,26 +638,26 @@ export async function calculateAvailabilityFromHistory(apiUrl, authToken, hostNa
         continue;
       }
       
-      // Calculer le temps passé dans chaque état (OK=0, WARN=1, CRIT=2, UNKNOWN=3)
+      // Compute time spent in each state (OK=0, WARN=1, CRIT=2, UNKNOWN=3)
       let timeOK = 0;
       let timeWARN = 0;
       let timeCRIT = 0;
       
-      // Trier les événements par date
+      // Sort events by date
       serviceEvents.sort((a, b) => {
         const timeA = new Date(a.time || a.from || a.timestamp || 0).getTime();
         const timeB = new Date(b.time || b.from || b.timestamp || 0).getTime();
         return timeA - timeB;
       });
       
-      let currentState = 0; // Par défaut OK
+      let currentState = 0; // By default OK
       let lastTime = startDate.getTime();
       
       for (const event of serviceEvents) {
         const eventTime = new Date(event.time || event.from || event.timestamp || startTime).getTime();
         const state = event.state || event.state_type || 0;
         
-        // Calculer le temps passé dans l'état précédent
+        // Compute time spent in the previous state
         const duration = Math.max(0, eventTime - lastTime);
         
         if (currentState === 0) timeOK += duration;
@@ -668,18 +668,18 @@ export async function calculateAvailabilityFromHistory(apiUrl, authToken, hostNa
         lastTime = eventTime;
       }
       
-      // Ajouter le temps restant jusqu'à la fin
+      // Add remaining time until the end
       const remainingDuration = Math.max(0, endDate.getTime() - lastTime);
       if (currentState === 0) timeOK += remainingDuration;
       else if (currentState === 1) timeWARN += remainingDuration;
       else if (currentState === 2) timeCRIT += remainingDuration;
       
-      // Calculer les pourcentages
+      // Compute percentages
       const okPercent = Math.round((timeOK / totalDuration) * 100);
       const warnPercent = Math.round((timeWARN / totalDuration) * 100);
       const critPercent = Math.round((timeCRIT / totalDuration) * 100);
       
-      // Normaliser pour que la somme fasse 100
+      // Normalize so the total equals 100
       const total = okPercent + warnPercent + critPercent;
       if (total > 0) {
         availability[serviceName] = {
@@ -696,7 +696,7 @@ export async function calculateAvailabilityFromHistory(apiUrl, authToken, hostNa
   }
 }
 
-// 📊 Fonction utilitaire : Récupérer l'historique des états du host (UP/DOWN/UNREACHABLE)
+// 📊 Utility function: fetch host state history (UP/DOWN/UNREACHABLE)
 // ───────────────────────────────────────────────
 export async function getHostStateHistory(apiUrl, authToken, hostName, startTime, endTime, site = '') {
   try {
@@ -760,12 +760,12 @@ export async function getHostStateHistory(apiUrl, authToken, hostName, startTime
       return null;
     }
     
-    // Calculer les statistiques d'état du host
+    // Compute host state statistics
     let timeUP = 0;
     let timeDOWN = 0;
     let timeUNREACHABLE = 0;
     
-    // Trier les événements par date
+    // Sort events by date
     events.sort((a, b) => {
       const timeA = new Date(a.time || a.from || a.timestamp || startTime).getTime();
       const timeB = new Date(b.time || b.from || b.timestamp || startTime).getTime();
@@ -775,7 +775,7 @@ export async function getHostStateHistory(apiUrl, authToken, hostName, startTime
     let currentState = 0; // 0 = UP, 1 = DOWN, 2 = UNREACHABLE
     let lastTime = startDate.getTime();
     
-    // Déterminer l'état initial (par défaut UP)
+    // Determine the initial state (UP by default)
     if (events.length > 0) {
       const firstEvent = events[0];
       const firstEventTime = new Date(firstEvent.time || firstEvent.from || firstEvent.timestamp || startTime).getTime();
@@ -789,7 +789,7 @@ export async function getHostStateHistory(apiUrl, authToken, hostName, startTime
       const eventTime = new Date(event.time || event.from || event.timestamp || startTime).getTime();
       const state = event.state || event.state_type || 0;
       
-      // Calculer le temps passé dans l'état précédent
+      // Compute time spent in the previous state
       const duration = Math.max(0, eventTime - lastTime);
       
       if (currentState === 0) timeUP += duration;
@@ -800,30 +800,30 @@ export async function getHostStateHistory(apiUrl, authToken, hostName, startTime
       lastTime = eventTime;
     }
     
-    // Ajouter le temps restant jusqu'à la fin
+    // Add remaining time until the end
     const remainingDuration = Math.max(0, endDate.getTime() - lastTime);
     if (currentState === 0) timeUP += remainingDuration;
     else if (currentState === 1) timeDOWN += remainingDuration;
     else if (currentState === 2) timeUNREACHABLE += remainingDuration;
     
-    // Calculer le taux de disponibilité (UP en %)
+    // Compute overall availability (UP as a percentage)
     const availabilityRate = totalDuration > 0 ? (timeUP / totalDuration) * 100 : 100;
     
-    // Calculer MTTR et MTBF à partir des incidents
+    // Compute MTTR and MTBF from incidents
     const incidents = events.filter(e => {
       const state = e.state || e.state_type || 0;
-      return state === 1 || state === 2; // DOWN ou UNREACHABLE
+      return state === 1 || state === 2; // DOWN or UNREACHABLE
     });
     
     let mttr = null;
     let mtbf = null;
     
     if (incidents.length > 0) {
-      // MTTR : durée moyenne des incidents (temps entre DOWN et UP suivant)
+      // MTTR: average incident duration (time between DOWN and the next UP)
       const incidentDurations = [];
       for (let i = 0; i < incidents.length; i++) {
         const incidentStart = new Date(incidents[i].time || incidents[i].from || incidents[i].timestamp || startTime).getTime();
-        // Chercher le prochain événement UP après cet incident
+        // Find the next UP event after the incident
         const nextUP = events.find(e => {
           const eTime = new Date(e.time || e.from || e.timestamp || startTime).getTime();
           const eState = e.state || e.state_type || 0;
@@ -837,7 +837,7 @@ export async function getHostStateHistory(apiUrl, authToken, hostName, startTime
             incidentDurations.push(duration);
           }
         } else {
-          // Si pas de retour UP trouvé, utiliser la fin de la période
+          // If no UP recovery is found, use the end of the period
           const duration = endDate.getTime() - incidentStart;
           if (duration > 0) {
             incidentDurations.push(duration);
@@ -846,10 +846,10 @@ export async function getHostStateHistory(apiUrl, authToken, hostName, startTime
       }
       
       if (incidentDurations.length > 0) {
-        mttr = incidentDurations.reduce((a, b) => a + b, 0) / incidentDurations.length / 1000 / 60; // en minutes
+        mttr = incidentDurations.reduce((a, b) => a + b, 0) / incidentDurations.length / 1000 / 60; // in minutes
       }
       
-      // MTBF : temps moyen entre deux incidents
+      // MTBF: average time between incidents
       if (incidents.length > 1) {
         const intervals = [];
         for (let i = 1; i < incidents.length; i++) {
@@ -862,7 +862,7 @@ export async function getHostStateHistory(apiUrl, authToken, hostName, startTime
         }
         
         if (intervals.length > 0) {
-          mtbf = intervals.reduce((a, b) => a + b, 0) / intervals.length / 1000 / 60; // en minutes
+          mtbf = intervals.reduce((a, b) => a + b, 0) / intervals.length / 1000 / 60; // in minutes
         }
       }
     }
@@ -882,12 +882,12 @@ export async function getHostStateHistory(apiUrl, authToken, hostName, startTime
   }
 }
 
-// 📊 Fonction utilitaire : Récupérer l'analyse de disponibilité
+// 📊 Utility function: fetch availability analysis
 // ───────────────────────────────────────────────
 export async function getAvailabilityAnalysis(apiUrl, authToken, hostName, startTime, endTime, site = '') {
   try {
-    // D'abord, essayer les endpoints de disponibilité directs
-    // Selon la documentation Check MK v1.0, l'endpoint peut varier
+    // First, try direct availability endpoints
+    // Per CheckMK v1.0 documentation, the endpoint may vary
     const availabilityEndpoints = [
       {
         url: `${apiUrl}/domain-types/availability/actions/analyze/invoke`,
@@ -989,16 +989,16 @@ export async function getAvailabilityAnalysis(apiUrl, authToken, hostName, start
       }
     }
     
-    // Si aucun endpoint de disponibilité ne fonctionne, retourner null
-    // On calculera la disponibilité à partir des services récupérés si nécessaire
+    // If no availability endpoint works, return null
+    // Availability will be computed from fetched services if needed
     return null;
   } catch (error) {
-    return null; // Retourner null au lieu de throw pour ne pas bloquer la récupération des services
+    return null; // Return null instead of throwing so service retrieval is not blocked
   }
 }
 
 /**
- * Parse une date d'événement CheckMK (timestamp, epoch, ISO, format européen).
+ * Parse a CheckMK event date (timestamp, epoch, ISO, European format).
  */
 export function parseCheckMKEventTime(event) {
   if (!event || typeof event !== 'object') return null;
@@ -1036,7 +1036,7 @@ export function parseCheckMKEventTime(event) {
 }
 
 /**
- * Nombre de jours à remonter dans view.py pour couvrir le début de la période du rapport.
+ * Number of days to look back in view.py to cover the report period start.
  */
 export function computeCheckMKLogtimeFromDays(startTime, endTime) {
   const start = new Date(startTime);
@@ -1049,7 +1049,7 @@ export function computeCheckMKLogtimeFromDays(startTime, endTime) {
 }
 
 /**
- * Ne conserve que les événements dont la date est dans [startTime, endTime].
+ * Keep only events whose date falls within [startTime, endTime].
  */
 export function filterCheckMKEventsByPeriod(
   events,

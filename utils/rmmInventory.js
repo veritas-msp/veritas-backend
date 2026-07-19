@@ -1,4 +1,4 @@
-/** Clés JSON inventaire associées à chaque collecteur RMM. */
+/** JSON inventory keys associated with each RMM collector. */
 
 import { repairRmmInventoryTextFields } from "./rmmTextEncoding.js";
 
@@ -40,7 +40,7 @@ export const RMM_COLLECTOR_DATA_KEYS = {
 
 
 
-/** Collecteurs exécutés uniquement lors d'un inventaire complet (sync). */
+/** Collectors run only during a full inventory sync. */
 
 export const RMM_SYNC_ONLY_COLLECTORS = new Set([
 
@@ -591,11 +591,8 @@ function stripAgentSyncRequestFields(data = {}) {
 
 
 /**
-
- * Fusionne l'inventaire entrant avec les données existantes et retire les sections
-
- * dont le collecteur est désactivé côté administration.
-
+ * Merges incoming inventory with existing data and removes sections
+ * whose collector is disabled in administration.
  */
 
 export function mergeRmmInventoryData(existingData = {}, inventory = {}, meta = {}, collectors = {}) {

@@ -5,6 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { pool } from "../../database/db.js";
 import verifyJWT from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/permissions.js";
 import { isUuid, resolveFileUploadedBy } from "../../utils/fileUploadedBy.js";
 
 const router = express.Router();
@@ -51,7 +52,7 @@ const upload = multer({
   },
 });
 
-router.get("/", verifyJWT, async (req, res) => {
+router.get("/", verifyJWT, requirePermission("documents.view"), async (req, res) => {
   try {
     const { equipmentId, clientId } = req.query;
     const conditions = ["is_deleted = FALSE"];
@@ -82,7 +83,7 @@ router.get("/", verifyJWT, async (req, res) => {
   }
 });
 
-router.post("/", verifyJWT, upload.single("file"), async (req, res) => {
+router.post("/", verifyJWT, requirePermission("documents.create"), upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "Aucun fichier reçu." });
 
@@ -140,7 +141,7 @@ router.post("/", verifyJWT, upload.single("file"), async (req, res) => {
   }
 });
 
-router.get("/:id/download", verifyJWT, async (req, res) => {
+router.get("/:id/download", verifyJWT, requirePermission("documents.view"), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT file_path, file_name, mime_type FROM v_b_equipment_files WHERE id = $1 AND is_deleted = FALSE`,
@@ -161,7 +162,7 @@ router.get("/:id/download", verifyJWT, async (req, res) => {
   }
 });
 
-router.get("/:id/preview", verifyJWT, async (req, res) => {
+router.get("/:id/preview", verifyJWT, requirePermission("documents.view"), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT file_path, file_name, mime_type FROM v_b_equipment_files WHERE id = $1 AND is_deleted = FALSE`,
@@ -182,7 +183,7 @@ router.get("/:id/preview", verifyJWT, async (req, res) => {
   }
 });
 
-router.delete("/:id", verifyJWT, async (req, res) => {
+router.delete("/:id", verifyJWT, requirePermission("documents.delete"), async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE v_b_equipment_files SET is_deleted = TRUE, updated_at = NOW()

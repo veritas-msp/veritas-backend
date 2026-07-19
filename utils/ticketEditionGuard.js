@@ -1,7 +1,7 @@
 import { isCommunity } from "./edition.js";
 import { isSalesTicket } from "../services/supportCredits.js";
 
-/** SQL — exclut les tickets prestations / installations (TicketSales), alias `t` optionnel. */
+/** SQL — excludes service/installation tickets (TicketSales), optional `t` alias. */
 export const COMMUNITY_SALES_TICKET_SQL =
   `NOT (LOWER(t.type) = 'demande' AND (t.category LIKE 'prestation-%' OR t.category LIKE 'installation-%'))`;
 

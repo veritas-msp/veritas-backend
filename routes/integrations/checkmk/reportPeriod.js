@@ -1,6 +1,6 @@
 // ───────────────────────────────────────────────
-// 📊 Route dédiée au rapport de monitoring : événements/notifications et disponibilité
-//     pour la période du rapport uniquement (sans modifier les appels EquipmentDetailPage).
+// 📊 Dedicated monitoring report route: events/notifications and availability
+//     for the report period only (without changing EquipmentDetailPage calls).
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -18,8 +18,8 @@ const router = express.Router();
 
 /**
  * GET /api/checkmk/report-period/:hostName
- * Query: start_time (ISO), end_time (ISO), site (optionnel)
- * Retourne { events, availability } pour la période précisée (période du rapport).
+ * Query: start_time (ISO), end_time (ISO), site (optional)
+ * Returns { events, availability } for the specified report period.
  */
 router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
   try {
@@ -57,7 +57,7 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
     const logtimeFromDays = computeCheckMKLogtimeFromDays(start_time, end_time);
     const viewUrl = `${baseUrl}/check_mk/view.py`;
 
-    // ─── 1) Événements / notifications (vue hostnotifications, période en jours)
+    // ─── 1) Events / notifications (hostnotifications view, period in days)
     let eventsResult = { host_name: hostName, events_count: 0, events: [], period: { start_time, end_time } };
     try {
       const eventParams = new URLSearchParams({
@@ -117,7 +117,7 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
                 stateNum = t === 'OK' ? 0 : t === 'WARNING' ? 1 : t === 'CRITICAL' ? 2 : 3;
               }
             }
-            // Plusieurs vues Check MK (hostnotifications, hostsvcevents, etc.) ont des ordres de colonnes différents
+            // Several Check MK views (hostnotifications, hostsvcevents, etc.) use different column orders
             const serviceVal = event[4] ?? event[3] ?? null;
             const messageVal = event[6] ?? event[5] ?? event[7] ?? null;
             const timeRaw = event[1];
@@ -194,7 +194,7 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
       console.error('[checkmk report-period] events:', e.message);
     }
 
-    // ─── 2) Disponibilité sur la période (av_from / av_to en Unix si supporté par la vue)
+    // ─── 2) Availability for the period (av_from / av_to as Unix timestamps when supported by the view)
     let availabilityResult = { host_name: hostName, availability: null };
     try {
       const avParams = new URLSearchParams({

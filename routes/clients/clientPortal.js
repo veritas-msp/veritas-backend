@@ -335,7 +335,7 @@ async function fetchEquipmentItems(clientId, type, { cloudPortal = false } = {})
   }
 }
 
-// ── Dashboard complet ─────────────────────────────────────────────────
+// ── Full dashboard ─────────────────────────────────────────────────
 router.get("/dashboard", async (req, res) => {
   const clientId = getClientId(req, res);
   if (!clientId) return;
@@ -441,12 +441,12 @@ router.get("/dashboard", async (req, res) => {
       files,
     });
   } catch (err) {
-    console.error("Erreur /client-portal/dashboard:", err);
+    console.error("/client-portal/dashboard:", err);
     res.status(500).json({ error: "Erreur serveur." });
   }
 });
 
-// ── Tickets support (portail client) ────────────────────────────────
+// ── Support tickets (client portal) ────────────────────────────────
 router.get(
   "/tickets",
   [
@@ -471,7 +471,7 @@ router.get(
       });
       res.json({ tickets });
     } catch (err) {
-      console.error("Erreur GET /client-portal/tickets:", err);
+      console.error("GET /client-portal/tickets:", err);
       res.status(500).json({ error: "Erreur lors de la récupération des tickets." });
     }
   }
@@ -489,7 +489,7 @@ router.get("/tickets/:id", [param("id").isUUID()], async (req, res) => {
     if (!ticket) return res.status(404).json({ error: "Ticket introuvable." });
     res.json(ticket);
   } catch (err) {
-    console.error("Erreur GET /client-portal/tickets/:id:", err);
+    console.error("GET /client-portal/tickets/:id:", err);
     res.status(500).json({ error: "Erreur lors de la récupération du ticket." });
   }
 });
@@ -531,7 +531,7 @@ router.post(
       });
       res.status(201).json(ticket);
     } catch (err) {
-      console.error("Erreur POST /client-portal/tickets:", err);
+      console.error("POST /client-portal/tickets:", err);
       res.status(500).json({ error: "Erreur lors de la création du ticket." });
     }
   }
@@ -576,7 +576,7 @@ router.post(
       if (err?.message && err.message.includes("Type de fichier non autorisé")) {
         return res.status(400).json({ error: err.message });
       }
-      console.error("Erreur POST /client-portal/tickets/:id/comments:", err);
+      console.error("POST /client-portal/tickets/:id/comments:", err);
       res.status(500).json({ error: "Erreur lors de l'envoi du message." });
     }
   }
@@ -631,7 +631,7 @@ router.patch(
           error: "La modification des messages est temporairement indisponible.",
         });
       }
-      console.error("Erreur PATCH /client-portal/tickets/:id/comments/:commentId:", err);
+      console.error("PATCH /client-portal/tickets/:id/comments/:commentId:", err);
       res.status(500).json({ error: "Erreur lors de la modification du message." });
     }
   }
@@ -680,7 +680,7 @@ router.post(
           error: "La validation a été enregistrée mais le ticket n'a pas pu être clos. Réessayez ou contactez le support.",
         });
       }
-      console.error("Erreur POST /client-portal/tickets/:id/validate-resolution:", err);
+      console.error("POST /client-portal/tickets/:id/validate-resolution:", err);
       res.status(500).json({ error: "Erreur lors de l'enregistrement de votre réponse." });
     }
   }
@@ -737,7 +737,7 @@ router.post(
             "Le module de satisfaction n'est pas activé. Exécutez : node scripts/run-ticket-satisfaction-migration.js",
         });
       }
-      console.error("Erreur POST /client-portal/tickets/:id/satisfaction:", err);
+      console.error("POST /client-portal/tickets/:id/satisfaction:", err);
       res.status(500).json({ error: "Erreur lors de l'enregistrement du retour." });
     }
   }
@@ -796,13 +796,13 @@ router.patch(
           error: "Le module de satisfaction n'est pas activé.",
         });
       }
-      console.error("Erreur PATCH /client-portal/tickets/:id/satisfaction:", err);
+      console.error("PATCH /client-portal/tickets/:id/satisfaction:", err);
       res.status(500).json({ error: "Erreur lors de la mise à jour du retour." });
     }
   }
 );
 
-// ── Coffre-fort documentaire (portail client) ─────────────────────────
+// ── Document vault (client portal) ─────────────────────────
 router.get(
   "/vault-files",
   [
@@ -831,7 +831,7 @@ router.get(
       });
       res.json({ files, total });
     } catch (err) {
-      console.error("Erreur GET /client-portal/vault-files:", err);
+      console.error("GET /client-portal/vault-files:", err);
       res.status(500).json({ error: "Erreur lors de la récupération des documents." });
     }
   }
@@ -858,7 +858,7 @@ router.get("/vault-files/:id/download", [param("id").isUUID()], async (req, res)
     );
     fs.createReadStream(fullPath).pipe(res);
   } catch (err) {
-    console.error("Erreur GET /client-portal/vault-files/:id/download:", err);
+    console.error("GET /client-portal/vault-files/:id/download:", err);
     res.status(500).json({ error: "Erreur lors du téléchargement." });
   }
 });
@@ -884,12 +884,12 @@ router.get("/vault-files/:id/preview", [param("id").isUUID()], async (req, res) 
     );
     fs.createReadStream(fullPath).pipe(res);
   } catch (err) {
-    console.error("Erreur GET /client-portal/vault-files/:id/preview:", err);
+    console.error("GET /client-portal/vault-files/:id/preview:", err);
     res.status(500).json({ error: "Erreur lors de la prévisualisation." });
   }
 });
 
-// ── Accès / mots de passe partagés (portail client) ─────────────────
+// ── Shared access / passwords (client portal) ─────────────────
 router.get("/vault-secrets", async (req, res) => {
   const ctx = await getPortalContext(req, res);
   if (!ctx) return;
@@ -899,7 +899,7 @@ router.get("/vault-secrets", async (req, res) => {
     const total = await countPortalVaultSecrets(ctx.contactId);
     res.json({ secrets, total });
   } catch (err) {
-    console.error("Erreur GET /client-portal/vault-secrets:", err);
+    console.error("GET /client-portal/vault-secrets:", err);
     res.status(500).json({ error: "Erreur lors de la récupération des accès." });
   }
 });
@@ -915,7 +915,7 @@ router.post("/vault-secrets/:id/reveal", [param("id").isUUID()], async (req, res
     const revealed = await revealPortalVaultSecret(ctx.contactId, req.params.id);
     res.json(revealed);
   } catch (err) {
-    console.error("Erreur POST /client-portal/vault-secrets/:id/reveal:", err);
+    console.error("POST /client-portal/vault-secrets/:id/reveal:", err);
     const code = String(err.code || "").toUpperCase();
     const status = code === "NOT_FOUND" ? 404 : code === "ACTIVE" ? 500 : 410;
     res.status(status === 410 ? 410 : status).json({
@@ -940,7 +940,7 @@ router.post("/vault-secrets/:id/request-revocation", [param("id").isUUID()], asy
     );
     res.json(result);
   } catch (err) {
-    console.error("Erreur POST /client-portal/vault-secrets/:id/request-revocation:", err);
+    console.error("POST /client-portal/vault-secrets/:id/request-revocation:", err);
     const status = err.message?.includes("introuvable") ? 404 : 400;
     res.status(status).json({ error: err.message || "Impossible de supprimer cet accès." });
   }
@@ -970,7 +970,7 @@ function hydratePortalContactRow(row) {
   };
 }
 
-// ── Fiche contact du client connecté ─────────────────────────────────
+// ── Logged-in client contact profile ─────────────────────────────────
 router.get("/contact", async (req, res) => {
   const ctx = await getPortalContext(req, res);
   if (!ctx) return;
@@ -986,7 +986,7 @@ router.get("/contact", async (req, res) => {
     }
     res.json({ contact });
   } catch (err) {
-    console.error("Erreur GET /client-portal/contact:", err);
+    console.error("GET /client-portal/contact:", err);
     res.status(500).json({ error: "Erreur lors de la récupération du contact." });
   }
 });
@@ -1050,7 +1050,7 @@ router.patch(
       if (String(err.message || "").includes("déjà utilisé")) {
         return res.status(409).json({ error: err.message });
       }
-      console.error("Erreur PATCH /client-portal/contact:", err);
+      console.error("PATCH /client-portal/contact:", err);
       res.status(500).json({ error: "Erreur lors de la mise à jour du contact." });
     }
   }

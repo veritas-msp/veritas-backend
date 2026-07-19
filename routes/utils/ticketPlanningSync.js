@@ -11,7 +11,7 @@ export async function resolveClientIdFromRequesterContact(contactId) {
   return clientId != null ? Number(clientId) : null;
 }
 
-/** Aligne client_id des rappels planning sur le ticket support. */
+/** Aligns planning reminder client_id with ticket support. */
 export async function syncTicketPlanningEventClient(ticketId, clientId) {
   if (!ticketId) return 0;
   const schema = await resolveEventsSchema();

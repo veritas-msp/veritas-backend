@@ -19,7 +19,7 @@ const router = express.Router();
 
 async function getUserMfa(userId) {
   const { rows } = await pool.query(
-    `SELECT id, email, username, role, client_id,
+    `SELECT id, email, username, role, profile, client_id,
             COALESCE(is_active, true) AS is_active,
             mfa_enabled, mfa_secret
      FROM v_b_users WHERE id = $1`,
@@ -28,7 +28,7 @@ async function getUserMfa(userId) {
   return rows[0];
 }
 
-// ── Étape 2 connexion : valider le code TOTP ──────────────────────────
+// ── Login step 2: validate TOTP code ────────────────────────────────────
 router.post("/login", mfaLoginRateLimit, async (req, res) => {
   const { mfaToken, code } = req.body;
   if (!mfaToken || !code) {
@@ -67,6 +67,7 @@ router.post("/login", mfaLoginRateLimit, async (req, res) => {
       email: user.email,
       username: user.username || null,
       role: user.role,
+      profile: user.profile ?? null,
       client_id: user.client_id ?? null,
       mfa_enabled: true,
     });
@@ -75,7 +76,7 @@ router.post("/login", mfaLoginRateLimit, async (req, res) => {
   }
 });
 
-// ── Générer le secret + QR (utilisateur connecté) ───────────────────
+// ── Start MFA setup ─────────────────────────────────────────────────────
 router.post("/setup", verifyJWT, async (req, res) => {
   try {
     const user = await getUserMfa(req.user.id);
@@ -92,12 +93,12 @@ router.post("/setup", verifyJWT, async (req, res) => {
 
     res.json({ secret, otpauthUrl, qrCodeDataUrl });
   } catch (err) {
-    console.error("Erreur MFA setup:", err);
+    console.error("MFA setup error:", err);
     res.status(500).json({ error: "Erreur lors de la configuration MFA." });
   }
 });
 
-// ── Confirmer l'activation MFA ────────────────────────────────────────
+// ── Confirm MFA activation ──────────────────────────────────────────────
 router.post("/verify", verifyJWT, async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: "Code requis." });
@@ -123,19 +124,19 @@ router.post("/verify", verifyJWT, async (req, res) => {
 
     res.json({ success: true, mfa_enabled: true });
   } catch (err) {
-    console.error("Erreur MFA verify:", err);
+    console.error("MFA verify error:", err);
     res.status(500).json({ error: "Erreur lors de l'activation MFA." });
   }
 });
 
-// ── Statut MFA ────────────────────────────────────────────────────────
+// ── MFA status ──────────────────────────────────────────────────────────
 router.get("/status", verifyJWT, async (req, res) => {
   try {
     const user = await getUserMfa(req.user.id);
     if (!user) return res.status(404).json({ error: "Utilisateur introuvable." });
     res.json({ mfa_enabled: Boolean(user.mfa_enabled) });
   } catch (err) {
-    console.error("Erreur MFA status:", err);
+    console.error("MFA status error:", err);
     res.status(500).json({ error: "Erreur serveur." });
   }
 });

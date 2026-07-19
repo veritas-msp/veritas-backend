@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 🏠 Routes des Hôtes Check MK
+// 🏠 Check MK host routes
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -10,14 +10,14 @@ import { getCheckMKSettings, authenticateCheckMK } from './utils.js';
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 🏠 GET /api/checkmk/host/:hostName — Récupérer les détails d'un host (labels, OS, etc.)
+// 🏠 GET /api/checkmk/host/:hostName — Fetch details for a host (labels, OS, etc.)
 // ───────────────────────────────────────────────
 router.get('/host/:hostName', verifyJWT, async (req, res) => {
   try {
     const { hostName } = req.params;
     const { site } = req.query;
     
-    // Récupérer les settings Check MK
+    // Fetch Check MK settings
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({ 
@@ -25,14 +25,14 @@ router.get('/host/:hostName', verifyJWT, async (req, res) => {
       });
     }
     
-    // Authentifier auprès de Check MK
+    // Authenticate with Check MK
     const authData = await authenticateCheckMK(
       settings.apiUrl,
       settings.username,
       settings.password
     );
     
-    // Essayer de récupérer les détails du host
+    // Try to fetch host details
     const possibleEndpoints = [
       `${settings.apiUrl}/objects/host/${encodeURIComponent(hostName)}`,
       `${settings.apiUrl}/domain-types/host/objects/${encodeURIComponent(hostName)}`,
@@ -116,7 +116,7 @@ router.get('/host/:hostName', verifyJWT, async (req, res) => {
         'label_sources',
         'label_source_names',
         'label_source_values',
-        // Informations supplémentaires
+        // Additional information
         'scheduled_downtime_depth',
         'in_downtime',
         'problem_has_been_acknowledged',
@@ -159,7 +159,7 @@ router.get('/host/:hostName', verifyJWT, async (req, res) => {
         statusData = Array.isArray(statusItems) ? statusItems[0] : statusItems;
       }
     } catch (statusError) {
-      // Ignore status fetch errors and keep base host details.
+      // Ignores status fetch errors and keep database host details.
     }
 
     const primaryData = runtimeData || configData;
@@ -170,12 +170,12 @@ router.get('/host/:hostName', verifyJWT, async (req, res) => {
       const statusExtensions = statusData?.extensions || {};
       const statusAttributes = statusExtensions.attributes || statusData?.attributes || {};
       
-      // Fusionner tous les labels de toutes les sources
+      // Merge labels from all sources
       const allLabels = {
         ...pickObject(configParts.attributes.labels || configParts.extensions.labels),
         ...pickObject(runtimeParts.attributes.labels || runtimeParts.extensions.labels),
         ...pickObject(statusAttributes.labels || statusExtensions.labels),
-        // Ajouter aussi les labels découverts/auto
+        // Also add discovered/auto labels
         ...pickObject(
           runtimeParts.attributes.discovered_labels || runtimeParts.extensions.discovered_labels
         ),
@@ -189,31 +189,31 @@ router.get('/host/:hostName', verifyJWT, async (req, res) => {
       hostDetails = {
         hostName: hostName,
         title: primaryData.title || hostName,
-        // Tous les labels (manuels + découverts)
+        // All labels (manual + discovered)
         labels: labels,
         discoveredLabels: {},
-        // Informations sur l'OS
+        // OS information
         os: pickValue(runtimeParts.attributes.os, runtimeParts.attributes.agent_os, configParts.attributes.os, configParts.attributes.agent_os) || null,
         osFamily: pickValue(runtimeParts.attributes.os_family, configParts.attributes.os_family) || null,
         agentVersion: pickValue(runtimeParts.attributes.agent_version, configParts.attributes.agent_version) || null,
-        // Autres informations utiles
+        // Other useful information
         alias: pickValue(runtimeParts.attributes.alias, configParts.attributes.alias) || null,
         ipAddress: pickValue(runtimeParts.attributes.ipaddress, runtimeParts.attributes.ip_address, statusAttributes.address, configParts.attributes.ipaddress, configParts.attributes.ip_address) || null,
         tags: pickObject(runtimeParts.attributes.tag_groups || runtimeParts.attributes.tags, configParts.attributes.tag_groups || configParts.attributes.tags),
-        // Hiérarchie réseau
+        // Network hierarchy
         parents: pickArray(runtimeParts.attributes.parents || runtimeParts.extensions.parents, configParts.attributes.parents || configParts.extensions.parents),
         children: pickArray(runtimeParts.attributes.children || runtimeParts.extensions.children, configParts.attributes.children || configParts.extensions.children),
-        // État du host
+        // State host
         state: (() => {
           const rawState = pickValue(runtimeParts.attributes.state, statusAttributes.state, configParts.attributes.state);
-          // Normaliser la valeur de l'état
+          // Normalize value state
           if (rawState === null || rawState === undefined) return null;
           const stateStr = String(rawState).toUpperCase().trim();
-          // Si c'est déjà une string (UP, DOWN, UNREACHABLE)
+          // If it is already a string (UP, DOWN, UNREACHABLE)
           if (stateStr === 'UP' || stateStr === 'DOWN' || stateStr === 'UNREACHABLE') {
             return stateStr;
           }
-          // Si c'est un nombre, le convertir
+          // If it is a number, convert it
           const stateNum = parseInt(rawState);
           if (!isNaN(stateNum)) {
             if (stateNum === 0) return 'UP';
@@ -235,7 +235,7 @@ router.get('/host/:hostName', verifyJWT, async (req, res) => {
           unknown: pickValue(statusAttributes.num_services_unknown) || null,
           worstState: pickValue(statusAttributes.worst_service_state) || null
         },
-        // Informations de vérification et notification
+        // Check and notification information
         checkInterval: pickValue(statusAttributes.check_interval, configParts.attributes.check_interval) || null,
         retryInterval: pickValue(statusAttributes.retry_interval, configParts.attributes.retry_interval) || null,
         notificationPeriod: pickValue(statusAttributes.notification_period, configParts.attributes.notification_period) || null,
@@ -244,10 +244,10 @@ router.get('/host/:hostName', verifyJWT, async (req, res) => {
         contactGroups: pickArray(statusAttributes.contact_groups, configParts.attributes.contact_groups),
         hostGroups: pickArray(statusAttributes.groups, configParts.attributes.groups),
         customVariables: pickObject(statusAttributes.custom_variables, configParts.attributes.custom_variables),
-        // Informations de monitoring
+        // Monitoring information
         inDowntime: (runtimeParts.attributes.scheduled_downtime_depth > 0) || (configParts.attributes.scheduled_downtime_depth > 0) || false,
         acknowledged: runtimeParts.attributes.problem_has_been_acknowledged || configParts.attributes.problem_has_been_acknowledged || false,
-        // Données brutes
+        // Raw data
         raw: primaryData,
         statusRaw: statusData || null
       };
@@ -271,7 +271,7 @@ router.get('/host/:hostName', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔍 GET /api/checkmk/hosts — Lister les hosts disponibles dans Check MK
+// 🔍 GET /api/checkmk/hosts — List available Check MK hosts
 // ───────────────────────────────────────────────
 router.get('/hosts', verifyJWT, async (req, res) => {
   try {
@@ -284,7 +284,7 @@ router.get('/hosts', verifyJWT, async (req, res) => {
       });
     }
     
-    // Authentifier
+    // Authenticate
     let authData;
     try {
       authData = await authenticateCheckMK(
@@ -301,9 +301,9 @@ router.get('/hosts', verifyJWT, async (req, res) => {
       });
     }
     
-    // Récupérer la liste des hosts
-    // Pour Check MK v1.0, essayons plusieurs endpoints possibles
-    // Format v1.0: /objects/host ou /domain-types/host_config/collections/all
+    // Fetch host list
+    // For CheckMK v1.0, try several possible endpoints
+    // Format v1.0: /objects/host or /domain-types/host_config/collections/all
     const possibleEndpoints = [
       `${settings.apiUrl}/domain-types/host_config/collections/all`,
       `${settings.apiUrl}/objects/host`,
@@ -315,7 +315,7 @@ router.get('/hosts', verifyJWT, async (req, res) => {
     let response;
     let lastError;
     
-    // Essayer chaque endpoint jusqu'à trouver celui qui fonctionne
+    // Try each endpoint until one works
     for (const endpoint of possibleEndpoints) {
       try {
         response = await fetch(endpoint, {
@@ -330,11 +330,11 @@ router.get('/hosts', verifyJWT, async (req, res) => {
           hostsUrl = endpoint;
           break;
         } else if (response.status !== 404) {
-          // Si ce n'est pas un 404, on garde cette réponse pour l'erreur
+          // If this is not a 404, keep this response for the error
           hostsUrl = endpoint;
           break;
         }
-        // Si 404, continuer avec le prochain endpoint
+        // If 404, continue with the next endpoint
         lastError = `404 - Endpoint non trouvé: ${endpoint}`;
       } catch (fetchError) {
         lastError = fetchError.message;
@@ -354,7 +354,7 @@ router.get('/hosts', verifyJWT, async (req, res) => {
         const errorJson = JSON.parse(responseText);
         errorDetails = errorJson.title || errorJson.detail || errorJson.message || responseText;
       } catch (e) {
-        // Garder le texte brut si ce n'est pas du JSON
+        // Keep raw text when this is not JSON
       }
       
       return res.status(response.status === 401 ? 401 : 500).json({
@@ -394,14 +394,14 @@ router.get('/hosts', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📊 GET /api/checkmk/availability-table/:hostName — Récupérer le tableau de disponibilité d'un host
+// 📊 GET /api/checkmk/availability-table/:hostName — Fetch availability array for a host
 // ───────────────────────────────────────────────
 router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
   try {
     const { hostName } = req.params;
     const { site, start_time, end_time } = req.query;
     
-    // Récupérer les settings Check MK
+    // Fetch Check MK settings
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({ 
@@ -409,7 +409,7 @@ router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
       });
     }
     
-    // Extraire l'URL de base CheckMK
+    // Extract CheckMK base URL
     let baseUrl = settings.apiUrl;
     baseUrl = baseUrl.replace(/\/check_mk\/api\/1\.0\/?$/, '');
     baseUrl = baseUrl.replace(/\/check_mk\/api\/?$/, '');
@@ -418,7 +418,7 @@ router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
     
     const checkmkSite = site || settings.site || '';
     
-    // Construire l'URL view.py pour récupérer le tableau de disponibilité
+    // Build the view.py URL to fetch the availability table
     // Format: https://monitoring.psi.fr/clients/check_mk/view.py?host=...&mode=availability&output_format=json_export&site=clients&view_name=hoststatus
     const viewUrl = `${baseUrl}/check_mk/view.py`;
     
@@ -429,7 +429,7 @@ router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
       view_name: 'hoststatus'
     });
     
-    // Ajouter le site dans les paramètres si disponible
+    // Add site to query settings when available
     if (checkmkSite) {
       urlParams.append('site', checkmkSite);
     }
@@ -445,7 +445,7 @@ router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
     
     const fullUrl = `${viewUrl}?${urlParams.toString()}`;
     
-    // Authentifier auprès de Check MK
+    // Authenticate with Check MK
     const authData = await authenticateCheckMK(
       settings.apiUrl,
       settings.username,
@@ -470,20 +470,20 @@ router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
         });
       }
       
-      // CheckMK retourne du HTML même avec json_export, il faut parser le HTML
+      // CheckMK may return HTML even with json_export; parse the HTML
       const html = await response.text();
       
-      // Parser le HTML pour extraire les données de disponibilité
-      // Format HTML : <tr class="data even0">...<td><span>100.00%</span></td>...
+      // Parse HTML to extract availability data
+      // HTML format: <tr class="data even0">...<td><span>100.00%</span></td>...
       let availabilityData = null;
       
-      // Chercher la ligne de données pour ce host
-      // Pattern : <tr class="data ..."> suivi de <td>...<a>hostName</a>... puis les valeurs dans <span>
+      // Find the data row for this host
+      // Pattern: <tr class="data ..."> followed by <td>...<a>hostName</a>... then values in <span>
       const hostPattern = new RegExp(`<tr[^>]*class="data[^"]*"[^>]*>.*?<td[^>]*>.*?<a[^>]*>${hostName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</a>.*?</td>(.*?)</tr>`, 'is');
       const match = html.match(hostPattern);
       
       if (match && match[1]) {
-        // Extraire toutes les valeurs <span>X.XX%</span> de cette ligne
+        // Extract all <span>X.XX%</span> values from this row
         const spanPattern = /<span[^>]*>([0-9.]+)%<\/span>/g;
         const values = [];
         let spanMatch;
@@ -492,7 +492,7 @@ router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
           values.push(parseFloat(spanMatch[1]));
         }
         
-        // Les colonnes sont dans l'ordre : Host (ignoré), UP, DOWN, UNREACH, Flapping, Downtime, N/A
+        // Columns are ordered: Host (ignored), UP, DOWN, UNREACH, Flapping, Downtime, N/A
         if (values.length >= 6) {
           availabilityData = {
             up: values[0] || 0,
@@ -505,18 +505,18 @@ router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
         }
       }
       
-      // Si on n'a pas trouvé avec le pattern, essayer une approche alternative
+      // If the pattern did not match, try an alternative approach
       if (!availabilityData) {
-        // Chercher toutes les lignes de données
+        // Search all data rows
         const allRowsPattern = /<tr[^>]*class="data[^"]*"[^>]*>(.*?)<\/tr>/gs;
         let rowMatch;
         
         while ((rowMatch = allRowsPattern.exec(html)) !== null) {
           const rowContent = rowMatch[1];
           
-          // Vérifier si cette ligne contient le hostName
+          // Check whether this line contains hostName
           if (rowContent.includes(hostName)) {
-            // Extraire toutes les valeurs <span>X.XX%</span>
+            // Extract all <span>X.XX%</span> values
             const spanPattern = /<span[^>]*>([0-9.]+)%<\/span>/g;
             const values = [];
             let spanMatch;
@@ -525,10 +525,10 @@ router.get('/availability-table/:hostName', verifyJWT, async (req, res) => {
               values.push(parseFloat(spanMatch[1]));
             }
             
-            // Les colonnes sont dans l'ordre : Host (ignoré), UP, DOWN, UNREACH, Flapping, Downtime, N/A
-            // Mais il peut y avoir des <td> avec des boutons avant, donc on prend les dernières valeurs
+            // Columns are ordered: Host (ignored), UP, DOWN, UNREACH, Flapping, Downtime, N/A
+            // There may be <td> cells with buttons first, so take the last values
             if (values.length >= 6) {
-              // Prendre les 6 dernières valeurs (en ignorant les premières qui peuvent être des boutons)
+              // Take the last 6 values (ignore leading cells that may be buttons)
               const lastValues = values.slice(-6);
               availabilityData = {
                 up: lastValues[0] || 0,

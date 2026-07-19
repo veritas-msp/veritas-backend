@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import { getJwtSecret } from "../middleware/auth.js";
 
-/** Durée de session (JWT + cookie httpOnly), alignée sur 24 h. */
+/** Session duration (JWT + httpOnly cookie), aligned to 24 hours. */
 export const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const SESSION_JWT_EXPIRES_IN = "1d";
 
@@ -27,6 +27,7 @@ export function buildSessionPayload(user) {
     id: user.id,
     email: user.email,
     role: user.role,
+    profile: user.profile ?? null,
     client_id: user.client_id ?? null,
   };
 }

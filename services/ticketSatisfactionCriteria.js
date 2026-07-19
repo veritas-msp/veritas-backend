@@ -1,4 +1,4 @@
-/** Critères de notation client (portail) — clés stables en base. */
+/** Client satisfaction rating criteria (portal) — stable keys stored in the database. */
 export const TICKET_SATISFACTION_CRITERIA = [
   {
     key: "responsiveness",

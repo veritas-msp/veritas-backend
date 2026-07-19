@@ -48,7 +48,7 @@ async function columnExists(client, tableName, columnName) {
 async function applyMigrationFile(client, relativePath, dbUser) {
   const filePath = path.join(root, relativePath);
   if (!fs.existsSync(filePath)) {
-    console.warn(`[integration-tenants] Migration introuvable : ${relativePath}`);
+    console.warn(`[integration-tenants] Migration not found: ${relativePath}`);
     return false;
   }
   const sql = adaptMigrationSql(fs.readFileSync(filePath, "utf8"), dbUser);
@@ -56,7 +56,7 @@ async function applyMigrationFile(client, relativePath, dbUser) {
   return true;
 }
 
-/** Tables tenants dédiés Bitdefender / Mailinblack (hors dossier Avril/). */
+/** Dedicated Bitdefender / Mailinblack tenant tables (outside Avril/). */
 export async function ensureIntegrationTenantsSchema() {
   if (ensured) return;
   if (!(await canRunAutoSchemaMigrations())) return;
@@ -69,15 +69,11 @@ export async function ensureIntegrationTenantsSchema() {
     for (const migration of MIGRATIONS) {
       if (await tableExists(client, migration.table)) continue;
 
-      console.log(
-        `[integration-tenants] Table ${migration.table} absente — application de ${migration.file}…`
-      );
       await applyMigrationFile(client, migration.file, dbUser);
 
       if (!(await tableExists(client, migration.table))) {
-        throw new Error(`Table ${migration.table} absente après migration`);
+        throw new Error(`Table ${migration.table} missing after migration`);
       }
-      console.log(`[integration-tenants] OK ${migration.label}`);
     }
 
     if (
@@ -88,15 +84,12 @@ export async function ensureIntegrationTenantsSchema() {
         MAILINBLACK_AUTH_CLIENT_COLUMN.column
       ))
     ) {
-      console.log(
-        `[integration-tenants] Colonne ${MAILINBLACK_AUTH_CLIENT_COLUMN.column} absente — migration…`
-      );
       await applyMigrationFile(client, MAILINBLACK_AUTH_CLIENT_COLUMN.file, dbUser);
     }
 
     ensured = true;
   } catch (err) {
-    console.error("[integration-tenants] Échec migration automatique:", err.message);
+    console.error("[integration-tenants] Automatic migration failed:", err.message);
     throw err;
   } finally {
     client.release();

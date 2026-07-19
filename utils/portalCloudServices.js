@@ -1,5 +1,5 @@
 /**
- * Extraction des métadonnées cloud exposables au portail client (sans secrets).
+ * Extracts cloud metadata exposable to the client portal (without secrets).
  */
 
 const MODULE_FLAG_LABELS = {

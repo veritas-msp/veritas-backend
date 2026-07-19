@@ -1,9 +1,10 @@
 // ───────────────────────────────────────────────
-// 📦 Routes Campagnes Cybersécurité
+// 📦 Routes Campaigns Cybersecurity
 // ───────────────────────────────────────────────
 import express from 'express';
 import { pool } from '../../database/db.js';
 import verifyJWT from '../../middleware/auth.js';
+import { requirePermission } from '../../middleware/permissions.js';
 import { requirePro } from '../../middleware/edition.js';
 import fetch from 'node-fetch';
 import { generateCampaignReportPDF } from '../../utils/pdfGenerator.js';
@@ -22,7 +23,7 @@ if (!fs.existsSync(CAMPAIGN_REPORTS_DIR)) {
 
 const router = express.Router();
 
-/** Ne pas intercepter /list, /general, etc. — ce routeur est monté avant clientsRoutes. */
+/** Do not intercept /list, /general, etc. — this router is mounted before clientsRoutes. */
 function isCampaignApiPath(pathname) {
   const path = String(pathname || "").split("?")[0];
   if (path === "/all-campaigns") return true;
@@ -39,10 +40,10 @@ router.use((req, res, next) => {
 });
 router.use(verifyJWT, requirePro);
 
-/** Âge max de la dernière synchro pour autoriser le lancement (24h) */
+/** Maximum age of the last sync allowed before launch (24h) */
 const RECENT_SYNC_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-/** Chaîne vide ou invalide → null pour colonnes numeric (évite 22P02 sur '') */
+/** Empty or invalid string → null for numeric columns (avoids 22P02 on '') */
 function normalizeNumericColumn(v) {
   if (v === undefined || v === null) return null;
   if (typeof v === 'string' && v.trim() === '') return null;
@@ -51,8 +52,8 @@ function normalizeNumericColumn(v) {
 }
 
 /**
- * Récupère les statistiques MFA du client depuis la base (données déjà synchronisées).
- * Utilisé pour créer les snapshots début/fin sans appeler l'API Microsoft.
+ * Loads client MFA statistics from the database (already synchronized data).
+ * Used to create start/end snapshots without calling the Microsoft API.
  * @returns {Promise<{ adminCount, userCount, adminMfaPercentage, userMfaPercentage, mfaPercentage, mfaEnabledCount, mfaDisabledCount, lastSync } | null>}
  */
 async function getClientMfaStatsFromDb(clientId) {
@@ -103,17 +104,17 @@ async function getClientMfaStatsFromDb(clientId) {
 }
 
 // ───────────────────────────────────────────────
-// 📋 GET /all-campaigns — Récupération de toutes les campagnes cybersécurité
+// 📋 GET /all-campaigns — Fetch all cybersecurity campaigns
 // ───────────────────────────────────────────────
-router.get('/all-campaigns', verifyJWT, async (req, res) => {
+router.get('/all-campaigns', requirePermission('cybersecurite.view'), async (req, res) => {
   try {
-    // Vérifier d'abord la connexion à la base
+    // First check database connection
     await pool.query('SELECT 1');
 
-    // Compter les campagnes
+    // Count campaigns
     const countResult = await pool.query('SELECT COUNT(*) as total FROM v_b_clients_c_campaign');
 
-    // Requête pour récupérer toutes les campagnes avec filtres optionnels
+    // Query to fetch all campaigns with optional filters
     const { status, type, client_id } = req.query;
 
     let query = `
@@ -156,11 +157,10 @@ router.get('/all-campaigns', verifyJWT, async (req, res) => {
     res.json(result.rows);
 
   } catch (error) {
-    console.error('❌ Erreur lors de la récupération des campagnes:', error);
+    console.error('Error fetching campaigns:', error);
 
-    // Si la table n'existe pas, retourner un tableau vide
+    // If table does not exist, return an empty array
     if (error.code === '42P01') {
-      console.log('⚠️ Table v_b_clients_c_campaign n\'existe pas, retour d\'un tableau vide');
       return res.json([]);
     }
 
@@ -173,9 +173,9 @@ router.get('/all-campaigns', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📋 GET /:id/campaigns — Récupération des campagnes cybersécurité d'un client
+// 📋 GET /:id/campaigns — Fetch cybersecurity campaigns for a client
 // ───────────────────────────────────────────────
-router.get('/:id/campaigns', verifyJWT, async (req, res) => {
+router.get('/:id/campaigns', requirePermission('cybersecurite.view'), async (req, res) => {
   try {
     const { id } = req.params;
     const { status, type } = req.query;
@@ -208,15 +208,15 @@ router.get('/:id/campaigns', verifyJWT, async (req, res) => {
     res.json(result.rows);
 
   } catch (error) {
-    console.error('Erreur lors de la récupération des campagnes:', error);
+    console.error('Error fetching campaigns:', error);
     res.status(500).json({ error: 'Erreur lors de la récupération des campagnes' });
   }
 });
 
 // ───────────────────────────────────────────────
-// ➕ POST /:id/campaigns — Créer une campagne cybersécurité
+// ➕ POST /:id/campaigns — Create a cybersecurity campaign
 // ───────────────────────────────────────────────
-router.post('/:id/campaigns', verifyJWT, async (req, res) => {
+router.post('/:id/campaigns', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, type, status, start_date, end_date, global_progress, description, objectif_adoption, referent_id, glpi_ticket_id } = req.body;
@@ -225,7 +225,7 @@ router.post('/:id/campaigns', verifyJWT, async (req, res) => {
       return res.status(400).json({ error: 'Le nom et le type sont requis' });
     }
 
-    // Récupérer l'utilisateur connecté
+    // Resolve connected user for audit fields
     const userId = req.user?.id || req.user?.user_id || null;
     let userName = req.user?.name || req.user?.username || req.user?.email || 'Utilisateur inconnu';
 
@@ -240,11 +240,11 @@ router.post('/:id/campaigns', verifyJWT, async (req, res) => {
           userName = user.name || user.username || user.email || 'Utilisateur inconnu';
         }
       } catch (userError) {
-        console.warn('Erreur lors de la récupération du nom utilisateur:', userError);
+        console.warn('Error fetching user name:', userError);
       }
     }
 
-    // Construire la requête dynamiquement selon les colonnes disponibles
+    // Build INSERT dynamically based on available columns
     const columns = ['client_id', 'name', 'type', 'status', 'start_date', 'end_date', 'global_progress', 'description', 'objectif_adoption', 'created_by', 'updated_by'];
     const gp = normalizeNumericColumn(global_progress);
     const oa = normalizeNumericColumn(objectif_adoption);
@@ -262,7 +262,7 @@ router.post('/:id/campaigns', verifyJWT, async (req, res) => {
       userName,
     ];
 
-    // Note: referent_id et glpi_ticket_id ne sont pas utilisés car les colonnes n'existent pas
+    // Insert campaign row
 
     const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ');
     const result = await pool.query(
@@ -274,12 +274,12 @@ router.post('/:id/campaigns', verifyJWT, async (req, res) => {
 
     const newCampaign = result.rows[0];
     
-    // Vérifier que l'ID a bien été récupéré
+    // Verify the created campaign ID was returned
     if (!newCampaign || !newCampaign.id) {
       throw new Error('Impossible de récupérer l\'ID de la campagne créée');
     }
 
-    // Si c'est une campagne de type microsoft_security, créer les étapes par défaut
+    // Create default steps for Microsoft Security campaigns
     if (type === 'microsoft_security') {
       const defaultSteps = [
         { name: 'Communication orale puis écrite au client', order_index: 1 },
@@ -299,10 +299,9 @@ router.post('/:id/campaigns', verifyJWT, async (req, res) => {
             [newCampaign.id, step.name, step.order_index]
           );
         }
-        console.log(`✅ ${defaultSteps.length} étapes par défaut créées pour la campagne ${newCampaign.id}`);
       } catch (stepError) {
-        console.error('⚠️ Erreur lors de la création des étapes par défaut:', stepError);
-        // Ne pas faire échouer la création de la campagne si les étapes échouent
+        console.error('Error creating default steps:', stepError);
+        // Do not fail campaign creation if default steps fail
       }
     }
 
@@ -320,20 +319,20 @@ router.post('/:id/campaigns', verifyJWT, async (req, res) => {
     res.status(201).json(newCampaign);
 
   } catch (error) {
-    console.error('Erreur lors de la création de la campagne:', error);
+    console.error('Error creating campaign:', error);
     res.status(500).json({ error: 'Erreur lors de la création de la campagne', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// ✏️ PUT /:id/campaigns/:campaignId — Modifier une campagne cybersécurité
+// ✏️ PUT /:id/campaigns/:campaignId — Update a cybersecurity campaign
 // ───────────────────────────────────────────────
-router.put('/:id/campaigns/:campaignId', verifyJWT, async (req, res) => {
+router.put('/:id/campaigns/:campaignId', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { id, campaignId } = req.params;
     const { name, type, status, start_date, end_date, global_progress, description, objectif_adoption, referent_id, glpi_ticket_id } = req.body;
 
-    // Récupérer l'utilisateur connecté
+    // Query to fetch all campaigns with optional filters
     const userId = req.user?.id || req.user?.user_id || null;
     let userName = req.user?.name || req.user?.username || req.user?.email || 'Utilisateur inconnu';
 
@@ -348,12 +347,11 @@ router.put('/:id/campaigns/:campaignId', verifyJWT, async (req, res) => {
           userName = user.name || user.username || user.email || 'Utilisateur inconnu';
         }
       } catch (userError) {
-        console.warn('Erreur lors de la récupération du nom utilisateur:', userError);
+        console.warn('Error fetching user name:', userError);
       }
     }
 
-    // Construire la requête dynamiquement selon les colonnes disponibles
-    // Ne mettre à jour que les champs qui sont fournis (non undefined)
+    // Only update fields that are provided (not undefined)
     const updates = [];
     const values = [];
     let paramIndex = 1;
@@ -397,15 +395,15 @@ router.put('/:id/campaigns/:campaignId', verifyJWT, async (req, res) => {
       values.push(normalizeNumericColumn(objectif_adoption));
     }
 
-    // Toujours mettre à jour updated_by et updated_at
+    // Always update updated_by and updated_at
     updates.push(`updated_by = $${paramIndex++}`);
     values.push(userName);
 
     updates.push(`updated_at = NOW()`);
 
-    // Note: referent_id et glpi_ticket_id ne sont pas utilisés car les colonnes n'existent pas
+    // No-op guard when only audit fields would change
 
-    if (updates.length === 2) { // Seulement updated_by et updated_at
+    if (updates.length === 2) { // Only updated_by and updated_at
       return res.status(400).json({ error: 'Aucune donnée à mettre à jour' });
     }
 
@@ -437,19 +435,19 @@ router.put('/:id/campaigns/:campaignId', verifyJWT, async (req, res) => {
     res.json(result.rows[0]);
 
   } catch (error) {
-    console.error('Erreur lors de la modification de la campagne:', error);
+    console.error('Error updating campaign:', error);
     res.status(500).json({ error: 'Erreur lors de la modification de la campagne' });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /campaigns/:campaignId — Supprimer une campagne cybersécurité (par ID seul)
+// 🗑️ DELETE /campaigns/:campaignId — Delete a cybersecurity campaign (by ID only)
 // ───────────────────────────────────────────────
-router.delete('/campaigns/:campaignId', verifyJWT, async (req, res) => {
+router.delete('/campaigns/:campaignId', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { campaignId } = req.params;
 
-    // Récupérer les informations de la campagne avant suppression
+    // Fetch campaign information before deletion
     const campaignResult = await pool.query(
       `SELECT * FROM v_b_clients_c_campaign WHERE id = $1`,
       [campaignId]
@@ -462,50 +460,42 @@ router.delete('/campaigns/:campaignId', verifyJWT, async (req, res) => {
     const campaign = campaignResult.rows[0];
     const clientId = campaign.client_id;
 
-    // Démarrer une transaction pour supprimer toutes les données liées
+    // Delete related data in a transaction
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      console.log(`🗑️ Suppression en cascade de la campagne ${campaignId} (client: ${clientId})`);
-
-      // 1. Supprimer les données MFA synchronisées pour ce client et cette campagne
+      // 1. Delete Azure MFA data for this client
       const mfaDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_azure_mfa WHERE client_id = $1`,
         [clientId]
       );
-      console.log(`✅ Supprimé ${mfaDeleteResult.rowCount} entrées MFA`);
 
-      // 2. Supprimer les statistiques Azure pour ce client
+      // 2. Delete Azure stats for this client
       const statsDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_azure_stats WHERE client_id = $1`,
         [clientId]
       );
-      console.log(`✅ Supprimé ${statsDeleteResult.rowCount} entrées statistiques`);
 
-      // 3. Supprimer tous les snapshots de cette campagne
+      // 3. Delete all snapshots for this campaign
       const snapshotsDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_campaign_snapshot WHERE campaign_id = $1`,
         [campaignId]
       );
-      console.log(`✅ Supprimé ${snapshotsDeleteResult.rowCount} snapshots`);
 
-      // 4. Supprimer toutes les étapes de cette campagne
+      // 4. Delete all steps for this campaign
       const stepsDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_campaign_steps WHERE campaign_id = $1`,
         [campaignId]
       );
-      console.log(`✅ Supprimé ${stepsDeleteResult.rowCount} étapes`);
 
-      // 5. Enfin, supprimer la campagne elle-même
+      // 5. Delete the campaign row
       const campaignDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_campaign WHERE id = $1 RETURNING *`,
         [campaignId]
       );
 
       await client.query('COMMIT');
-
-      console.log(`✅ Campagne ${campaignId} supprimée avec succès`);
 
       res.json({
         success: true,
@@ -528,19 +518,19 @@ router.delete('/campaigns/:campaignId', verifyJWT, async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Erreur lors de la suppression de la campagne:', error);
+    console.error('Error deleting campaign:', error);
     res.status(500).json({ error: 'Erreur lors de la suppression de la campagne', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /:id/campaigns/:campaignId — Supprimer une campagne cybersécurité (legacy)
+// 🗑️ DELETE /:id/campaigns/:campaignId — Delete a cybersecurity campaign (legacy)
 // ───────────────────────────────────────────────
-router.delete('/:id/campaigns/:campaignId', verifyJWT, async (req, res) => {
+router.delete('/:id/campaigns/:campaignId', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { id, campaignId } = req.params;
 
-    // Vérifier que la campagne existe
+    // Check that the campaign exists
     const campaignResult = await pool.query(
       `SELECT * FROM v_b_clients_c_campaign WHERE id = $1 AND client_id = $2`,
       [campaignId, id]
@@ -552,50 +542,42 @@ router.delete('/:id/campaigns/:campaignId', verifyJWT, async (req, res) => {
 
     const campaign = campaignResult.rows[0];
 
-    // Démarrer une transaction pour supprimer toutes les données liées
+    // Delete related data in a transaction
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      console.log(`🗑️ Suppression en cascade de la campagne ${campaignId} (client: ${id})`);
-
-      // 1. Supprimer les données MFA synchronisées pour ce client
+      // Note: referent_id and glpi_ticket_id are unused because columns do not exist
       const mfaDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_azure_mfa WHERE client_id = $1`,
         [id]
       );
-      console.log(`✅ Supprimé ${mfaDeleteResult.rowCount} entrées MFA`);
 
-      // 2. Supprimer les statistiques Azure pour ce client
+      // 2. Delete Azure stats for this client
       const statsDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_azure_stats WHERE client_id = $1`,
         [id]
       );
-      console.log(`✅ Supprimé ${statsDeleteResult.rowCount} entrées statistiques`);
 
-      // 3. Supprimer tous les snapshots de cette campagne
+      // 3. Delete all snapshots for this campaign
       const snapshotsDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_campaign_snapshot WHERE campaign_id = $1`,
         [campaignId]
       );
-      console.log(`✅ Supprimé ${snapshotsDeleteResult.rowCount} snapshots`);
 
-      // 4. Supprimer toutes les étapes de cette campagne
+      // 4. Delete all steps for this campaign
       const stepsDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_campaign_steps WHERE campaign_id = $1`,
         [campaignId]
       );
-      console.log(`✅ Supprimé ${stepsDeleteResult.rowCount} étapes`);
 
-      // 5. Enfin, supprimer la campagne elle-même
+      // Delete the campaign row
       const campaignDeleteResult = await client.query(
         `DELETE FROM v_b_clients_c_campaign WHERE id = $1 AND client_id = $2 RETURNING *`,
         [campaignId, id]
       );
 
       await client.query('COMMIT');
-
-      console.log(`✅ Campagne ${campaignId} supprimée avec succès`);
 
       res.json({
         success: true,
@@ -618,19 +600,19 @@ router.delete('/:id/campaigns/:campaignId', verifyJWT, async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Erreur lors de la suppression de la campagne:', error);
+    console.error('Error deleting campaign:', error);
     res.status(500).json({ error: 'Erreur lors de la suppression de la campagne', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🚀 POST /:id/campaigns/:campaignId/launch — Lancer une campagne Microsoft Security
+// 🚀 POST /:id/campaigns/:campaignId/launch — Launch a Microsoft Security campaign
 // ───────────────────────────────────────────────
-router.post('/:id/campaigns/:campaignId/launch', verifyJWT, async (req, res) => {
+router.post('/:id/campaigns/:campaignId/launch', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { id, campaignId } = req.params;
 
-    // Vérifier que la campagne existe et est de type microsoft_security
+    // Check that the campaign exists and is microsoft_security type
     const campaignResult = await pool.query(
       `SELECT id, type, status FROM v_b_clients_c_campaign WHERE id = $1 AND client_id = $2`,
       [campaignId, id]
@@ -646,7 +628,7 @@ router.post('/:id/campaigns/:campaignId/launch', verifyJWT, async (req, res) => 
       return res.status(400).json({ error: 'Cette fonctionnalité est uniquement disponible pour les campagnes de type microsoft_security' });
     }
 
-    // Vérifier si un snapshot start existe déjà
+    // Check whether a start snapshot already exists
     const existingSnapshot = await pool.query(
       `SELECT id FROM v_b_clients_c_campaign_snapshot WHERE campaign_id = $1 AND snapshot_type = 'start'`,
       [campaignId]
@@ -710,7 +692,7 @@ router.post('/:id/campaigns/:campaignId/launch', verifyJWT, async (req, res) => 
 
       snapshot = snapshotResult.rows[0];
     } else {
-      // Récupérer le snapshot existant
+      // Fetch existing start snapshot
       const snapshotResult = await pool.query(
         `SELECT * FROM v_b_clients_c_campaign_snapshot WHERE campaign_id = $1 AND snapshot_type = 'start' LIMIT 1`,
         [campaignId]
@@ -718,7 +700,7 @@ router.post('/:id/campaigns/:campaignId/launch', verifyJWT, async (req, res) => 
       snapshot = snapshotResult.rows[0];
     }
 
-    // Mettre à jour le statut de la campagne vers "active" (même si un snapshot existe déjà)
+    // Update campaign status to active (even if start snapshot already existed)
     await pool.query(
       `UPDATE v_b_clients_c_campaign SET status = 'active', updated_at = NOW() WHERE id = $1`,
       [campaignId]
@@ -733,19 +715,19 @@ router.post('/:id/campaigns/:campaignId/launch', verifyJWT, async (req, res) => 
     });
 
   } catch (error) {
-    console.error('Erreur lors du lancement de la campagne:', error);
+    console.error('Error launching campaign:', error);
     res.status(500).json({ error: 'Erreur lors du lancement de la campagne', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🏁 POST /:id/campaigns/:campaignId/finish — Terminer une campagne Microsoft Security
+// 🏁 POST /:id/campaigns/:campaignId/finish — Finish a Microsoft Security campaign
 // ───────────────────────────────────────────────
-router.post('/:id/campaigns/:campaignId/finish', verifyJWT, async (req, res) => {
+router.post('/:id/campaigns/:campaignId/finish', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { id, campaignId } = req.params;
 
-    // Vérifier que la campagne existe et est en cours
+    // Check that the campaign exists and is in progress
     const campaignResult = await pool.query(
       `SELECT id, type, status FROM v_b_clients_c_campaign WHERE id = $1 AND client_id = $2`,
       [campaignId, id]
@@ -765,7 +747,7 @@ router.post('/:id/campaigns/:campaignId/finish', verifyJWT, async (req, res) => 
       return res.status(400).json({ error: 'La campagne doit être active ou en cours pour être terminée' });
     }
 
-    // Vérifier qu'un snapshot start existe
+    // Check that a start snapshot exists
     const startSnapshotResult = await pool.query(
       `SELECT * FROM v_b_clients_c_campaign_snapshot WHERE campaign_id = $1 AND snapshot_type = 'start'`,
       [campaignId]
@@ -775,7 +757,7 @@ router.post('/:id/campaigns/:campaignId/finish', verifyJWT, async (req, res) => 
       return res.status(400).json({ error: 'Aucun snapshot de début trouvé. Veuillez d\'abord lancer la campagne.' });
     }
 
-    // Vérifier si un snapshot end existe déjà
+    // Check whether an end snapshot already exists
     const existingEndSnapshot = await pool.query(
       `SELECT id FROM v_b_clients_c_campaign_snapshot WHERE campaign_id = $1 AND snapshot_type = 'end'`,
       [campaignId]
@@ -828,7 +810,7 @@ router.post('/:id/campaigns/:campaignId/finish', verifyJWT, async (req, res) => 
     const startSnapshot = startSnapshotResult.rows[0];
     const endSnapshot = endSnapshotResult.rows[0];
 
-    // Calculer les comparaisons
+    // Compute comparisons
     const comparison = {
       adminCount: {
         start: startSnapshot.admin_count,
@@ -852,7 +834,7 @@ router.post('/:id/campaigns/:campaignId/finish', verifyJWT, async (req, res) => 
       }
     };
 
-    // Récupérer les informations complètes de la campagne
+    // Load full campaign row for PDF generation
     const fullCampaignResult = await pool.query(
       `SELECT c.*, cl.name as client_name 
        FROM v_b_clients_c_campaign c
@@ -862,17 +844,17 @@ router.post('/:id/campaigns/:campaignId/finish', verifyJWT, async (req, res) => 
     );
     const fullCampaign = fullCampaignResult.rows[0];
 
-    // Générer le PDF
+    // Generate PDF report (non-blocking on failure)
     const pdfPath = path.join(CAMPAIGN_REPORTS_DIR, `campaign_${campaignId}_report.pdf`);
 
     try {
       await generateCampaignReportPDF(fullCampaign, startSnapshot, endSnapshot, comparison, pdfPath);
     } catch (pdfError) {
-      console.error('Erreur lors de la génération du PDF:', pdfError);
-      // Continuer même si le PDF échoue
+      console.error('Error generating PDF:', pdfError);
+      // PDF generation failed; continue finishing the campaign
     }
 
-    // Mettre à jour le statut de la campagne
+    // Update campaign status to inactive
     await pool.query(
       `UPDATE v_b_clients_c_campaign SET status = 'inactive', updated_at = NOW() WHERE id = $1`,
       [campaignId]
@@ -889,15 +871,15 @@ router.post('/:id/campaigns/:campaignId/finish', verifyJWT, async (req, res) => 
     });
 
   } catch (error) {
-    console.error('Erreur lors de la fin de la campagne:', error);
+    console.error('Error finishing campaign:', error);
     res.status(500).json({ error: 'Erreur lors de la fin de la campagne', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🔄 POST /:id/campaigns/:campaignId/reset — Remettre la campagne à zéro (supprimer snapshots + permettre relance)
+// 🔄 POST /:id/campaigns/:campaignId/reset — Reset campaign snapshots and status
 // ───────────────────────────────────────────────
-router.post('/:id/campaigns/:campaignId/reset', verifyJWT, async (req, res) => {
+router.post('/:id/campaigns/:campaignId/reset', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { id, campaignId } = req.params;
 
@@ -923,19 +905,19 @@ router.post('/:id/campaigns/:campaignId/reset', verifyJWT, async (req, res) => {
       message: 'Campagne remise à zéro. Vous pouvez la lancer à nouveau.'
     });
   } catch (error) {
-    console.error('Erreur lors du reset de la campagne:', error);
+    console.error('Error resetting campaign:', error);
     res.status(500).json({ error: 'Erreur lors de la remise à zéro de la campagne', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📊 GET /:id/campaigns/:campaignId/stats — Récupérer les statistiques d'une campagne
+// 📊 GET /:id/campaigns/:campaignId/stats — Fetch campaign statistics
 // ───────────────────────────────────────────────
-router.get('/:id/campaigns/:campaignId/stats', verifyJWT, async (req, res) => {
+router.get('/:id/campaigns/:campaignId/stats', requirePermission('cybersecurite.view'), async (req, res) => {
   try {
     const { id, campaignId } = req.params;
 
-    // Vérifier que la campagne existe
+    // Check that the campaign exists
     const campaignResult = await pool.query(
       `SELECT id, type, status FROM v_b_clients_c_campaign WHERE id = $1 AND client_id = $2`,
       [campaignId, id]
@@ -955,7 +937,7 @@ router.get('/:id/campaigns/:campaignId/stats', verifyJWT, async (req, res) => {
       } catch (_) {}
     }
 
-    // Récupérer les snapshots - requête optimisée avec LIMIT pour éviter de charger tous les snapshots
+    // Fetch campaign snapshots
     const snapshotsResult = await pool.query(
       `SELECT * FROM v_b_clients_c_campaign_snapshot 
        WHERE campaign_id = $1 
@@ -968,10 +950,10 @@ router.get('/:id/campaigns/:campaignId/stats', verifyJWT, async (req, res) => {
     const startSnapshot = snapshots.find(s => s.snapshot_type === 'start');
     const endSnapshot = snapshots.find(s => s.snapshot_type === 'end');
 
-    // Si pas de snapshots, retourner les stats actuelles (seulement si demandé explicitement via query param)
+    // When no snapshots exist, optionally return current MFA stats
     if (!startSnapshot && !endSnapshot) {
-      // Ne charger les stats Office 365 que si explicitement demandé (via ?includeCurrent=true)
-      // Sinon retourner directement null pour éviter les appels API lents
+      // Return current stats when requested
+      // Note: referent_id and glpi_ticket_id are unused because columns do not exist
       const includeCurrent = req.query.includeCurrent === 'true';
       
       if (includeCurrent && campaign.type === 'microsoft_security') {
@@ -1019,7 +1001,7 @@ router.get('/:id/campaigns/:campaignId/stats', verifyJWT, async (req, res) => {
       return { nonAdminCount, nonAdminMfaPercentage: nonAdminMfaPercentage ?? 0 };
     };
 
-    // Si on a les deux snapshots, retourner la comparaison
+    // When both snapshots exist, return comparison
     if (startSnapshot && endSnapshot) {
       const startExtra = parseSnapshotExtra(startSnapshot);
       const endExtra = parseSnapshotExtra(endSnapshot);
@@ -1092,7 +1074,7 @@ router.get('/:id/campaigns/:campaignId/stats', verifyJWT, async (req, res) => {
       });
     }
 
-    // Si seulement le snapshot start existe
+    // When only a start snapshot exists
     if (startSnapshot) {
       const startExtra = parseSnapshotExtra(startSnapshot);
       return res.json({
@@ -1124,15 +1106,15 @@ router.get('/:id/campaigns/:campaignId/stats', verifyJWT, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Erreur lors de la récupération des statistiques:', error);
+    console.error('Error fetching statistics:', error);
     res.status(500).json({ error: 'Erreur lors de la récupération des statistiques', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📄 GET /:id/campaigns/:campaignId/report.pdf — Télécharger le rapport PDF
+// 📄 GET /:id/campaigns/:campaignId/report.pdf — Download campaign PDF report
 // ───────────────────────────────────────────────
-router.get('/:id/campaigns/:campaignId/report.pdf', verifyJWT, async (req, res) => {
+router.get('/:id/campaigns/:campaignId/report.pdf', requirePermission('cybersecurite.view'), async (req, res) => {
   try {
     const { campaignId } = req.params;
 
@@ -1149,17 +1131,17 @@ router.get('/:id/campaigns/:campaignId/report.pdf', verifyJWT, async (req, res) 
     fileStream.pipe(res);
 
   } catch (error) {
-    console.error('Erreur lors du téléchargement du PDF:', error);
+    console.error('Error downloading PDF:', error);
     res.status(500).json({ error: 'Erreur lors du téléchargement du PDF', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📋 Routes pour les Steps (Étapes) des campagnes
+// 📋 Routes for Steps (Steps) campaigns
 // ───────────────────────────────────────────────
 
-// GET /:id/campaigns/:campaignId/steps — Récupérer toutes les étapes d'une campagne
-router.get('/:id/campaigns/:campaignId/steps', verifyJWT, async (req, res) => {
+// GET /:id/campaigns/:campaignId/steps — Fetch all campaign steps
+router.get('/:id/campaigns/:campaignId/steps', requirePermission('cybersecurite.view'), async (req, res) => {
   try {
     const { campaignId } = req.params;
 
@@ -1174,13 +1156,13 @@ router.get('/:id/campaigns/:campaignId/steps', verifyJWT, async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error('Erreur lors de la récupération des étapes:', error);
+    console.error('Error fetching steps:', error);
     res.status(500).json({ error: 'Erreur lors de la récupération des étapes', details: error.message });
   }
 });
 
-// POST /:id/campaigns/:campaignId/steps — Créer une nouvelle étape
-router.post('/:id/campaigns/:campaignId/steps', verifyJWT, async (req, res) => {
+// POST /:id/campaigns/:campaignId/steps — Create a new step
+router.post('/:id/campaigns/:campaignId/steps', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { campaignId } = req.params;
     const { name, assigned_user_id, due_date, duration_hours, order_index } = req.body;
@@ -1189,7 +1171,7 @@ router.post('/:id/campaigns/:campaignId/steps', verifyJWT, async (req, res) => {
       return res.status(400).json({ error: 'Le nom de l\'étape est requis' });
     }
 
-    // Récupérer le prochain order_index si non fourni
+    // Fetch next order_index when not provided
     let finalOrderIndex = order_index;
     if (finalOrderIndex === undefined || finalOrderIndex === null) {
       const maxOrderResult = await pool.query(
@@ -1207,7 +1189,7 @@ router.post('/:id/campaigns/:campaignId/steps', verifyJWT, async (req, res) => {
       [campaignId, name, assigned_user_id || null, due_date || null, duration_hours || null, finalOrderIndex]
     );
 
-    // Récupérer les informations de l'utilisateur assigné
+    // Attach assigned user details when present
     if (result.rows[0].assigned_user_id) {
       const userResult = await pool.query(
         `SELECT username, email FROM v_b_users WHERE id = $1`,
@@ -1219,13 +1201,13 @@ router.post('/:id/campaigns/:campaignId/steps', verifyJWT, async (req, res) => {
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Erreur lors de la création de l\'étape:', error);
+    console.error('Error creating de l\'étape:', error);
     res.status(500).json({ error: 'Erreur lors de la création de l\'étape', details: error.message });
   }
 });
 
-// PUT /:id/campaigns/:campaignId/steps/reorder — Réorganiser l'ordre des étapes (doit être avant /steps/:stepId)
-router.put('/:id/campaigns/:campaignId/steps/reorder', verifyJWT, async (req, res) => {
+// PUT /:id/campaigns/:campaignId/steps/reorder — Reorder campaign steps
+router.put('/:id/campaigns/:campaignId/steps/reorder', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { campaignId } = req.params;
     const { stepOrders } = req.body; // Array of { id, order_index }
@@ -1296,13 +1278,13 @@ router.put('/:id/campaigns/:campaignId/steps/reorder', verifyJWT, async (req, re
       client.release();
     }
   } catch (error) {
-    console.error('Erreur lors de la réorganisation des étapes:', error);
+    console.error('Error reordering steps:', error);
     res.status(500).json({ error: 'Erreur lors de la réorganisation des étapes', details: error.message });
   }
 });
 
-// PUT /:id/campaigns/:campaignId/steps/:stepId — Mettre à jour une étape
-router.put('/:id/campaigns/:campaignId/steps/:stepId', verifyJWT, async (req, res) => {
+// PUT /:id/campaigns/:campaignId/steps/:stepId — Update a step
+router.put('/:id/campaigns/:campaignId/steps/:stepId', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { stepId } = req.params;
     const { name, assigned_user_id, due_date, duration_hours, completed, order_index } = req.body;
@@ -1355,7 +1337,7 @@ router.put('/:id/campaigns/:campaignId/steps/:stepId', verifyJWT, async (req, re
       return res.status(404).json({ error: 'Étape non trouvée' });
     }
 
-    // Récupérer les informations de l'utilisateur assigné
+    // Attach assigned user details when present
     if (result.rows[0].assigned_user_id) {
       const userResult = await pool.query(
         `SELECT username, email FROM v_b_users WHERE id = $1`,
@@ -1367,13 +1349,13 @@ router.put('/:id/campaigns/:campaignId/steps/:stepId', verifyJWT, async (req, re
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Erreur lors de la mise à jour de l\'étape:', error);
+    console.error('Error mise à jour de l\'étape:', error);
     res.status(500).json({ error: 'Erreur lors de la mise à jour de l\'étape', details: error.message });
   }
 });
 
-// DELETE /:id/campaigns/:campaignId/steps/:stepId — Supprimer une étape
-router.delete('/:id/campaigns/:campaignId/steps/:stepId', verifyJWT, async (req, res) => {
+// DELETE /:id/campaigns/:campaignId/steps/:stepId — Delete a step
+router.delete('/:id/campaigns/:campaignId/steps/:stepId', requirePermission('cybersecurite.edit'), async (req, res) => {
   try {
     const { stepId } = req.params;
 
@@ -1388,7 +1370,7 @@ router.delete('/:id/campaigns/:campaignId/steps/:stepId', verifyJWT, async (req,
 
     res.json({ success: true, message: 'Étape supprimée avec succès' });
   } catch (error) {
-    console.error('Erreur lors de la suppression de l\'étape:', error);
+    console.error('Error deleting de l\'étape:', error);
     res.status(500).json({ error: 'Erreur lors de la suppression de l\'étape', details: error.message });
   }
 });

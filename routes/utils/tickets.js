@@ -2,6 +2,7 @@ import express from "express";
 import { body, param, query, validationResult } from "express-validator";
 import { pool } from "../../database/db.js";
 import verifyJWT from "../../middleware/auth.js";
+import { requirePermission, requireAnyPermission } from "../../middleware/permissions.js";
 import fs from "fs";
 import path from "path";
 import multer from "multer";
@@ -835,7 +836,7 @@ router.get("/automation-config", verifyJWT, async (_req, res) => {
     });
     return res.json(normalized);
   } catch (err) {
-    console.error("Erreur GET /tickets/automation-config:", err);
+    console.error("GET /tickets/automation-config:", err);
     return res.status(500).json({ error: "Erreur lors du chargement de la configuration ticket." });
   }
 });
@@ -843,6 +844,7 @@ router.get("/automation-config", verifyJWT, async (_req, res) => {
 router.put(
   "/automation-config",
   verifyJWT,
+  requirePermission("tickets.manage"),
   [
     body("commentTemplates").optional().isArray(),
     body("macros").optional().isArray(),
@@ -886,7 +888,7 @@ router.put(
 
       return res.json(normalized);
     } catch (err) {
-      console.error("Erreur PUT /tickets/automation-config:", err);
+      console.error("PUT /tickets/automation-config:", err);
       return res.status(500).json({ error: "Erreur lors de la sauvegarde de la configuration ticket." });
     }
   }
@@ -1319,6 +1321,7 @@ router.post(
 router.post(
   "/search",
   verifyJWT,
+  requirePermission("tickets.view"),
   [
     body("viewRules").optional({ nullable: true }).custom((value) => value == null || typeof value === "object"),
     body("viewMode").optional().isIn(["active", "trash"]),
@@ -1371,7 +1374,7 @@ router.post(
         offset: result.offset,
       });
     } catch (err) {
-      console.error("Erreur recherche paginée tickets:", err);
+      console.error("Error recherche paginée tickets:", err);
       return res.status(500).json({ error: "Erreur lors de la recherche des tickets" });
     }
   }
@@ -1399,7 +1402,7 @@ router.get(
       }
       res.json(payload);
     } catch (err) {
-      console.error("Erreur comptage satisfactions:", err);
+      console.error("Failed to count satisfactions:", err);
       res.status(500).json({ error: "Erreur lors du comptage des retours clients." });
     }
   }
@@ -1440,7 +1443,7 @@ router.get(
       });
       res.json(result);
     } catch (err) {
-      console.error("Erreur liste satisfactions:", err);
+      console.error("Error liste satisfactions:", err);
       res.status(500).json({ error: "Erreur lors de la récupération des retours clients." });
     }
   }
@@ -1449,6 +1452,7 @@ router.get(
 router.get(
   "/",
   verifyJWT,
+  requirePermission("tickets.view"),
   [
     query("status").optional().isIn(STATUS_VALUES),
     query("priority").optional().isIn(PRIORITY_VALUES),
@@ -1628,7 +1632,7 @@ router.get(
       const rows = await enrichTicketRowsWithSla(result.rows, { hasSlaInfo });
       res.json(await enrichTicketRowsWithSatisfaction(rows));
     } catch (err) {
-      console.error("Erreur lors de la récupération des tickets:", err);
+      console.error("Error fetching des tickets:", err);
       res.status(500).json({ error: "Erreur lors de la récupération des tickets" });
     }
   }
@@ -1637,6 +1641,7 @@ router.get(
 router.post(
   "/",
   verifyJWT,
+  requirePermission("tickets.create"),
   [
     body("title").notEmpty().withMessage("Le titre est requis"),
     body("description").optional().isString(),
@@ -1857,7 +1862,7 @@ router.post(
         ...enrichedTickets[0],
       });
     } catch (err) {
-      console.error("Erreur lors de la création du ticket:", err);
+      console.error("Error creating du ticket:", err);
       res.status(500).json({ error: "Erreur lors de la création du ticket" });
     }
   }
@@ -2090,6 +2095,7 @@ async function applyBulkTicketPurge(ticketId) {
 router.post(
   "/bulk",
   verifyJWT,
+  requireAnyPermission("tickets.edit", "tickets.delete", "tickets.manage"),
   [
     body("ticketIds").isArray({ min: 1, max: 100 }),
     body("ticketIds.*").isUUID(),
@@ -2204,7 +2210,7 @@ router.post(
         results,
       });
     } catch (err) {
-      console.error("Erreur action groupée tickets:", err);
+      console.error("Error action groupée tickets:", err);
       return res.status(500).json({ error: "Erreur lors de l'action groupée sur les tickets" });
     }
   }
@@ -2219,7 +2225,7 @@ router.get("/categories", verifyJWT, async (_req, res) => {
     );
     return res.json(result.rows || []);
   } catch (err) {
-    console.error("Erreur lors du chargement des catégories ITIL:", err);
+    console.error("Error loading des catégories ITIL:", err);
     return res.status(500).json({ error: "Erreur lors du chargement des catégories ITIL" });
   }
 });
@@ -2250,7 +2256,7 @@ router.post(
       );
       return res.status(201).json(result.rows?.[0] || null);
     } catch (err) {
-      console.error("Erreur création catégorie ITIL:", err);
+      console.error("Failed to create catégorie ITIL:", err);
       return res.status(500).json({ error: "Erreur lors de la création de la catégorie ITIL" });
     }
   }
@@ -2307,7 +2313,7 @@ router.put(
       }
       return res.json(result.rows[0]);
     } catch (err) {
-      console.error("Erreur modification catégorie ITIL:", err);
+      console.error("Failed to update catégorie ITIL:", err);
       return res.status(500).json({ error: "Erreur lors de la modification de la catégorie ITIL" });
     }
   }
@@ -2328,7 +2334,7 @@ router.delete(
       }
       return res.json({ success: true });
     } catch (err) {
-      console.error("Erreur suppression catégorie ITIL:", err);
+      console.error("Failed to delete catégorie ITIL:", err);
       return res.status(500).json({ error: "Erreur lors de la suppression de la catégorie ITIL" });
     }
   }
@@ -2343,7 +2349,7 @@ router.get("/category-sections", verifyJWT, async (_req, res) => {
     );
     return res.json(result.rows || []);
   } catch (err) {
-    console.error("Erreur lors du chargement des sections ITIL:", err);
+    console.error("Error loading des sections ITIL:", err);
     return res.status(500).json({ error: "Erreur lors du chargement des sections ITIL" });
   }
 });
@@ -2368,7 +2374,7 @@ router.post(
       );
       return res.status(201).json(result.rows?.[0] || null);
     } catch (err) {
-      console.error("Erreur création section ITIL:", err);
+      console.error("Failed to create section ITIL:", err);
       return res.status(500).json({ error: "Erreur lors de la création de la section ITIL" });
     }
   }
@@ -2432,7 +2438,7 @@ router.put(
       }
       return res.json(result.rows[0]);
     } catch (err) {
-      console.error("Erreur modification section ITIL:", err);
+      console.error("Failed to update section ITIL:", err);
       return res.status(500).json({ error: "Erreur lors de la modification de la section ITIL" });
     }
   }
@@ -2468,7 +2474,7 @@ router.delete(
       await pool.query(`DELETE FROM v_b_ticket_category_sections WHERE id = $1`, [sectionId]);
       return res.json({ success: true });
     } catch (err) {
-      console.error("Erreur suppression section ITIL:", err);
+      console.error("Failed to delete section ITIL:", err);
       return res.status(500).json({ error: "Erreur lors de la suppression de la section ITIL" });
     }
   }
@@ -2491,7 +2497,7 @@ router.get(
       });
       return res.json(items);
     } catch (err) {
-      console.error("Erreur GET /tickets/solution-catalog:", err);
+      console.error("GET /tickets/solution-catalog:", err);
       return res.status(500).json({ error: "Erreur lors du chargement du catalogue de solutions" });
     }
   }
@@ -2530,7 +2536,7 @@ router.post(
       if (String(err?.code || "") === "23505") {
         return res.status(409).json({ error: "Ce libellé existe déjà pour cette catégorie." });
       }
-      console.error("Erreur POST /tickets/solution-catalog:", err);
+      console.error("POST /tickets/solution-catalog:", err);
       return res.status(500).json({ error: "Erreur lors de la création de l'entrée catalogue" });
     }
   }
@@ -2569,7 +2575,7 @@ router.put(
       if (String(err?.code || "") === "23505") {
         return res.status(409).json({ error: "Ce libellé existe déjà pour cette catégorie." });
       }
-      console.error("Erreur PUT /tickets/solution-catalog/:entryId:", err);
+      console.error("PUT /tickets/solution-catalog/:entryId:", err);
       return res.status(500).json({ error: "Erreur lors de la modification de l'entrée catalogue" });
     }
   }
@@ -2590,7 +2596,7 @@ router.delete(
       if (!deleted) return res.status(404).json({ error: "Entrée catalogue introuvable" });
       return res.json({ success: true });
     } catch (err) {
-      console.error("Erreur DELETE /tickets/solution-catalog/:entryId:", err);
+      console.error("DELETE /tickets/solution-catalog/:entryId:", err);
       return res.status(500).json({ error: "Erreur lors de la suppression de l'entrée catalogue" });
     }
   }
@@ -2599,6 +2605,7 @@ router.delete(
 router.get(
   "/trash",
   verifyJWT,
+  requirePermission("tickets.view"),
   [query("limit").optional().isInt({ min: 1, max: 200 }), query("offset").optional().isInt({ min: 0 })],
   async (req, res) => {
     const validationResponse = validationErrorOrNull(req, res);
@@ -2661,7 +2668,7 @@ router.get(
 
       return res.json(await enrichTicketRowsWithSla(result.rows, { hasSlaInfo }));
     } catch (err) {
-      console.error("Erreur récupération corbeille tickets:", err);
+      console.error("Error fetching corbeille tickets:", err);
       return res.status(500).json({ error: "Erreur lors de la récupération de la corbeille tickets" });
     }
   }
@@ -2721,7 +2728,7 @@ router.get(
 
       res.json(result.rows[0]);
     } catch (err) {
-      console.error("Erreur ticket aléatoire:", err);
+      console.error("Error ticket aléatoire:", err);
       res.status(500).json({ error: "Erreur lors de la sélection d'un ticket aléatoire" });
     }
   }
@@ -2743,8 +2750,85 @@ router.get(
       }
       res.json(ticket);
     } catch (err) {
-      console.error("Erreur lors de la récupération du ticket:", err);
+      console.error("Error fetching du ticket:", err);
       res.status(500).json({ error: "Erreur lors de la récupération du ticket" });
+    }
+  }
+);
+
+function normalizeAiRunbookPayload(raw, { resetChecked = false } = {}) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const checklist = Array.isArray(source.checklist)
+    ? source.checklist.map((step) => String(step || "").trim()).filter(Boolean)
+    : [];
+  const checkedIn = source.checked && typeof source.checked === "object" ? source.checked : {};
+  const checked = {};
+  checklist.forEach((_, idx) => {
+    const key = `step-${idx}`;
+    checked[key] = resetChecked ? false : Boolean(checkedIn[key]);
+  });
+  return {
+    title: String(source.title || "").trim() || "Runbook",
+    checklist,
+    checked,
+    generatedAt: source.generatedAt || new Date().toISOString(),
+    generatedBy: source.generatedBy || null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Met à jour le runbook IA (génération complète ou cochage des étapes). */
+router.patch(
+  "/:id/ai-runbook",
+  verifyJWT,
+  requireAnyPermission("tickets.edit", "tickets.manage"),
+  [param("id").isUUID().withMessage("ID ticket invalide")],
+  async (req, res) => {
+    const validationResponse = validationErrorOrNull(req, res);
+    if (validationResponse) return;
+
+    try {
+      if (!(await hasTicketColumn("ai_runbook"))) {
+        return res.status(503).json({ error: "Colonne ai_runbook indisponible — migration requise" });
+      }
+
+      const { id } = req.params;
+      const existing = await pool.query(
+        `SELECT id, ai_runbook, status, is_deleted FROM v_b_tickets WHERE id = $1`,
+        [id]
+      );
+      if (!existing.rows.length) return res.status(404).json({ error: "Ticket non trouvé" });
+      if (isTicketLockedForEdits(existing.rows[0])) {
+        return res.status(409).json({
+          error: "Ce ticket est clos. Rouvrez-le pour modifier le runbook.",
+        });
+      }
+
+      const body = req.body || {};
+      const current = existing.rows[0].ai_runbook || {};
+      const nextSource = {
+        title: body.title !== undefined ? body.title : current.title,
+        checklist: body.checklist !== undefined ? body.checklist : current.checklist,
+        checked: body.checked !== undefined ? body.checked : current.checked,
+        generatedAt: body.generatedAt || current.generatedAt,
+        generatedBy: body.generatedBy !== undefined ? body.generatedBy : current.generatedBy,
+      };
+      const normalized = normalizeAiRunbookPayload(nextSource, {
+        resetChecked: Array.isArray(body.checklist) && body.replaceChecklist === true,
+      });
+
+      const updated = await pool.query(
+        `UPDATE v_b_tickets
+         SET ai_runbook = $1::jsonb, updated_at = NOW()
+         WHERE id = $2
+         RETURNING ai_runbook`,
+        [JSON.stringify(normalized), id]
+      );
+
+      return res.json({ ai_runbook: updated.rows[0].ai_runbook });
+    } catch (err) {
+      console.error("Error updating ticket ai_runbook:", err);
+      return res.status(500).json({ error: "Erreur lors de la sauvegarde du runbook" });
     }
   }
 );
@@ -2752,6 +2836,7 @@ router.get(
 router.put(
   "/:id",
   verifyJWT,
+  requirePermission("tickets.edit"),
   [
     param("id").isUUID(),
     body("title").optional().notEmpty(),
@@ -2946,7 +3031,7 @@ router.put(
 
       res.json(result.rows[0]);
     } catch (err) {
-      console.error("Erreur lors de la mise à jour du ticket:", err);
+      console.error("Error mise à jour du ticket:", err);
       res.status(500).json({ error: "Erreur lors de la mise à jour du ticket" });
     }
   }
@@ -2955,6 +3040,7 @@ router.put(
 router.delete(
   "/:id",
   verifyJWT,
+  requirePermission("tickets.delete"),
   [param("id").isUUID().withMessage("ID ticket invalide")],
   async (req, res) => {
     const validationResponse = validationErrorOrNull(req, res);
@@ -2972,7 +3058,7 @@ router.delete(
       if (err?.status === 503) {
         return res.status(503).json({ error: err.message });
       }
-      console.error("Erreur suppression ticket:", err);
+      console.error("Failed to delete ticket:", err);
       res.status(500).json({ error: "Erreur lors de la suppression du ticket" });
     }
   }
@@ -2981,6 +3067,7 @@ router.delete(
 router.post(
   "/:id/restore",
   verifyJWT,
+  requirePermission("tickets.edit"),
   [param("id").isUUID().withMessage("ID ticket invalide")],
   async (req, res) => {
     const validationResponse = validationErrorOrNull(req, res);
@@ -3001,7 +3088,7 @@ router.post(
 
       res.json({ success: true });
     } catch (err) {
-      console.error("Erreur restauration ticket:", err);
+      console.error("Error restore ticket:", err);
       res.status(500).json({ error: "Erreur lors de la restauration du ticket" });
     }
   }
@@ -3010,6 +3097,7 @@ router.post(
 router.delete(
   "/:id/purge",
   verifyJWT,
+  requirePermission("tickets.manage"),
   [param("id").isUUID().withMessage("ID ticket invalide")],
   async (req, res) => {
     const validationResponse = validationErrorOrNull(req, res);
@@ -3029,7 +3117,7 @@ router.delete(
       await pool.query("DELETE FROM v_b_tickets WHERE id = $1", [id]);
       res.json({ success: true });
     } catch (err) {
-      console.error("Erreur purge ticket:", err);
+      console.error("Error purge ticket:", err);
       res.status(500).json({ error: "Erreur lors de la purge du ticket" });
     }
   }
@@ -3153,7 +3241,7 @@ router.patch(
       const ticket = await getTicketById(id);
       res.json({ ...ticket, creditChanges });
     } catch (err) {
-      console.error("Erreur lors du changement de statut ticket:", err);
+      console.error("Error changement de statut ticket:", err);
       res.status(500).json({ error: "Erreur lors du changement de statut ticket" });
     }
   }
@@ -3264,7 +3352,7 @@ router.post(
             whatsappDelivery = { attempted: true, success: true, ...waResult };
           }
         } catch (whatsappErr) {
-          console.error("Erreur envoi réponse WhatsApp:", whatsappErr);
+          console.error("Error envoi réponse WhatsApp:", whatsappErr);
           whatsappDelivery = {
             attempted: true,
             success: false,
@@ -3290,7 +3378,7 @@ router.post(
       if (err?.message && err.message.includes("Type de fichier non autorisé")) {
         return res.status(400).json({ error: err.message });
       }
-      console.error("Erreur lors de l'ajout de commentaire ticket:", err);
+      console.error("Error ajout de commentaire ticket:", err);
       res.status(500).json({ error: "Erreur lors de l'ajout de commentaire" });
     }
   }
@@ -3469,7 +3557,7 @@ router.patch(
         attachments: attachmentsResult.rows,
       });
     } catch (err) {
-      console.error("Erreur lors de la modification de commentaire ticket:", err);
+      console.error("Error updating de commentaire ticket:", err);
       res.status(500).json({ error: "Erreur lors de la modification du commentaire" });
     }
   }
@@ -3535,7 +3623,7 @@ router.delete(
 
       res.json({ success: true, id: commentId });
     } catch (err) {
-      console.error("Erreur lors de la suppression de commentaire ticket:", err);
+      console.error("Error deleting de commentaire ticket:", err);
       res.status(500).json({ error: "Erreur lors de la suppression du commentaire" });
     }
   }
@@ -3605,7 +3693,7 @@ router.post(
             "Module de validation client indisponible. Exécutez : node scripts/run-ticket-resolution-validation-migration.js",
         });
       }
-      console.error("Erreur POST /tickets/:id/resolve-with-validation:", err);
+      console.error("POST /tickets/:id/resolve-with-validation:", err);
       res.status(500).json({ error: "Erreur lors de la résolution du ticket." });
     }
   }
@@ -3638,7 +3726,7 @@ router.post(
 
       res.status(201).json(tagResult);
     } catch (err) {
-      console.error("Erreur ajout tag ticket:", err);
+      console.error("Error ajout tag ticket:", err);
       res.status(500).json({ error: "Erreur lors de l'ajout du tag" });
     }
   }
@@ -3657,7 +3745,7 @@ router.delete(
       await pool.query("DELETE FROM v_b_ticket_tag_links WHERE ticket_id = $1 AND tag_id = $2", [id, tagId]);
       res.json({ success: true });
     } catch (err) {
-      console.error("Erreur suppression tag ticket:", err);
+      console.error("Failed to delete tag ticket:", err);
       res.status(500).json({ error: "Erreur lors de la suppression du tag" });
     }
   }
@@ -3681,7 +3769,7 @@ router.post(
       );
       res.status(201).json({ success: true });
     } catch (err) {
-      console.error("Erreur ajout watcher:", err);
+      console.error("Error ajout watcher:", err);
       res.status(500).json({ error: "Erreur lors de l'ajout du follower" });
     }
   }
@@ -3699,7 +3787,7 @@ router.delete(
       await pool.query("DELETE FROM v_b_ticket_watchers WHERE ticket_id = $1 AND user_id = $2", [id, userId]);
       res.json({ success: true });
     } catch (err) {
-      console.error("Erreur suppression watcher:", err);
+      console.error("Failed to delete watcher:", err);
       res.status(500).json({ error: "Erreur lors de la suppression du follower" });
     }
   }
@@ -3741,7 +3829,7 @@ router.post(
       }).catch(() => {});
       res.status(201).json({ success: true });
     } catch (err) {
-      console.error("Erreur ajout assigné:", err);
+      console.error("Error ajout assigné:", err);
       res.status(500).json({ error: "Erreur lors de l'ajout de l'assigné" });
     }
   }
@@ -3785,7 +3873,7 @@ router.delete(
       );
       res.json({ success: true });
     } catch (err) {
-      console.error("Erreur suppression assigné:", err);
+      console.error("Failed to delete assigné:", err);
       res.status(500).json({ error: "Erreur lors de la suppression de l'assigné" });
     }
   }

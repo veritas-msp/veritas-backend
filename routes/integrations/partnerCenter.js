@@ -1,6 +1,6 @@
 // ───────────────────────────────────────────────
-// 📦 Route Microsoft Partner Center — Intégration avec Microsoft Graph API
-// Utilise l'endpoint /policies/crossTenantAccessPolicy/partners pour lister les partenaires
+// 📦 Route Microsoft Partner Center — Integration with Microsoft Graph API
+// Uses the /policies/crossTenantAccessPolicy/partners endpoint to list partners
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -11,7 +11,7 @@ import { getSettingsMap } from '../../utils/settingsHelper.js';
 
 const router = express.Router();
 
-// Toutes les routes nécessitent une authentification
+// All routes require authentication
 router.use(verifyJWT);
 
 // ───────────────────────────────────────────────
@@ -22,7 +22,7 @@ const PARTNER_CENTER_API_URL = 'https://api.partnercenter.microsoft.com/v1';
 const AUTH_URL_TEMPLATE = (tenantId) => `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
 
 // ───────────────────────────────────────────────
-// 🔐 Fonction utilitaire : Récupérer les settings Partner Center
+// 🔐 Utility function: fetch Partner Center settings
 // ───────────────────────────────────────────────
 async function getPartnerCenterSettings() {
   try {
@@ -42,7 +42,7 @@ async function getPartnerCenterSettings() {
 }
 
 // ───────────────────────────────────────────────
-// 🔑 Gestion des tokens d'accès (cache en mémoire)
+// 🔑 Access token management (in-memory cache)
 // ───────────────────────────────────────────────
 let graphTokenCache = {
   token: null,
@@ -54,7 +54,7 @@ let partnerCenterTokenCache = {
   expiry: null
 };
 
-// Fonction pour vider le cache des tokens (utile après modification des permissions)
+// Function to clear the token cache (useful after permission changes)
 function clearTokenCache() {
   graphTokenCache.token = null;
   graphTokenCache.expiry = null;
@@ -62,9 +62,9 @@ function clearTokenCache() {
   partnerCenterTokenCache.expiry = null;
 }
 
-// Token pour Microsoft Graph API
+// Token for Microsoft Graph API
 async function getGraphAccessToken() {
-  // Vérifier si le token est encore valide (avec 5 minutes de marge)
+  // Check whether the token is still valid (with a 5-minute margin)
   if (graphTokenCache.token && graphTokenCache.expiry && Date.now() < graphTokenCache.expiry) {
     return graphTokenCache.token;
   }
@@ -98,7 +98,7 @@ async function getGraphAccessToken() {
 
     const data = await response.json();
     graphTokenCache.token = data.access_token;
-    // Expire 5 minutes avant la vraie expiration
+    // Expire 5 minutes before actual expiration
     graphTokenCache.expiry = Date.now() + (data.expires_in - 300) * 1000;
 
     return graphTokenCache.token;
@@ -107,9 +107,9 @@ async function getGraphAccessToken() {
   }
 }
 
-// Token pour Partner Center API
+// Token for Partner Center API
 async function getPartnerCenterAccessToken() {
-  // Vérifier si le token est encore valide (avec 5 minutes de marge)
+  // Check whether the token is still valid (with a 5-minute margin)
   if (partnerCenterTokenCache.token && partnerCenterTokenCache.expiry && Date.now() < partnerCenterTokenCache.expiry) {
     return partnerCenterTokenCache.token;
   }
@@ -143,7 +143,7 @@ async function getPartnerCenterAccessToken() {
 
     const data = await response.json();
     partnerCenterTokenCache.token = data.access_token;
-    // Expire 5 minutes avant la vraie expiration
+    // Expire 5 minutes before actual expiration
     partnerCenterTokenCache.expiry = Date.now() + (data.expires_in - 300) * 1000;
 
     return partnerCenterTokenCache.token;
@@ -152,27 +152,27 @@ async function getPartnerCenterAccessToken() {
   }
 }
 
-// Alias pour compatibilité
+// Compatibility alias
 async function getAccessToken() {
   return getGraphAccessToken();
 }
 
 // ───────────────────────────────────────────────
-// 🔍 Fonction : Décoder le token JWT pour vérifier les permissions
+// 🔍 Function: decode the JWT token to verify permissions
 // ───────────────────────────────────────────────
 function decodeToken(token) {
   try {
-    // Un JWT a 3 parties séparées par des points : header.payload.signature
+    // A JWT has three dot-separated parts: header.payload.signature
     const parts = token.split('.');
     if (parts.length !== 3) {
       return null;
     }
     
-    // Décoder le payload (base64url)
+    // Decode the payload (base64url)
     const payload = parts[1];
-    // Remplacer les caractères base64url par base64 standard
+    // Replace base64url characters with standard base64
     const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-    // Ajouter le padding si nécessaire
+    // Add padding if needed
     const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
     const decoded = Buffer.from(padded, 'base64').toString('utf-8');
     
@@ -183,7 +183,7 @@ function decodeToken(token) {
 }
 
 // ───────────────────────────────────────────────
-// 🔍 Fonction : Vérifier les permissions dans le token
+// 🔍 Function : Check permissions in token
 // ───────────────────────────────────────────────
 async function checkTokenPermissions() {
   try {
@@ -197,8 +197,8 @@ async function checkTokenPermissions() {
       };
     }
     
-    // Les permissions d'application sont dans les "roles" ou "scp"
-    // Pour client_credentials, les permissions sont dans "roles"
+    // Application permissions are in "roles" or "scp"
+    // For client_credentials, permissions are in "roles"
     const roles = decoded.roles || [];
     const scopes = decoded.scp || decoded.scope || '';
     
@@ -221,7 +221,7 @@ async function checkTokenPermissions() {
 }
 
 // ───────────────────────────────────────────────
-// 📡 Fonction utilitaire : Appel API Partner Center
+// 📡 Utility function: Partner Center API call
 // ───────────────────────────────────────────────
 async function callGraphApi(endpoint, method = 'GET', body = null) {
   const token = await getAccessToken();
@@ -255,14 +255,14 @@ async function callGraphApi(endpoint, method = 'GET', body = null) {
       const errorMessage = errorData.error?.message || errorData.message || response.statusText;
       const errorCode = errorData.error?.code || errorData.code || '';
       
-      // Créer un objet d'erreur plus détaillé
+      // Create a more detailed error object
       const detailedError = new Error(errorMessage);
       detailedError.status = response.status;
       detailedError.statusText = response.statusText;
       detailedError.code = errorCode;
       detailedError.details = errorData.error || errorData;
       
-      // Message spécial pour les erreurs 403
+      // Special message for 403 errors
       if (response.status === 403 && errorCode === 'Authorization_RequestDenied') {
         detailedError.permissionIssue = true;
         detailedError.suggestion = 'Le consentement administrateur n\'a peut-être pas été accordé. ' +
@@ -275,7 +275,7 @@ async function callGraphApi(endpoint, method = 'GET', body = null) {
 
     return await response.json();
   } catch (error) {
-    // Si c'est déjà notre erreur détaillée, la relancer
+    // If it is already our detailed error, rethrow it
     if (error.status) {
       throw error;
     }
@@ -283,7 +283,7 @@ async function callGraphApi(endpoint, method = 'GET', body = null) {
   }
 }
 
-// Générer un UUID v4 pour les headers Partner Center
+// Generate a UUID v4 for Partner Center headers
 function generateUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0;
@@ -293,23 +293,23 @@ function generateUUID() {
 }
 
 function generateRequestId() {
-  // Partner Center attend un UUID pour MS-RequestId
+  // Partner Center expects a UUID for MS-RequestId
   return generateUUID();
 }
 
 function generateCorrelationId() {
-  // Partner Center attend un UUID pour MS-CorrelationId
+  // Partner Center expects a UUID for MS-CorrelationId
   return generateUUID();
 }
 
 // ───────────────────────────────────────────────
-// 📡 Fonction utilitaire : Appel API Partner Center
+// 📡 Utility function: Partner Center API call
 // ───────────────────────────────────────────────
 async function callPartnerCenterApi(endpoint, method = 'GET', body = null) {
   const token = await getPartnerCenterAccessToken();
   const url = endpoint.startsWith('http') ? endpoint : `${PARTNER_CENTER_API_URL}${endpoint}`;
 
-  // Partner Center nécessite des UUID pour les headers MS-RequestId et MS-CorrelationId
+  // Partner Center requires UUIDs for the MS-RequestId and MS-CorrelationId headers
   const requestId = generateRequestId();
   const correlationId = generateCorrelationId();
 
@@ -343,7 +343,7 @@ async function callPartnerCenterApi(endpoint, method = 'GET', body = null) {
       try {
         errorData = JSON.parse(errorText);
       } catch (e) {
-        // Si ce n'est pas du JSON, garder le texte brut
+        // If this is not JSON, keep raw text
         errorData = { raw: errorText };
       }
       
@@ -362,9 +362,9 @@ async function callPartnerCenterApi(endpoint, method = 'GET', body = null) {
       detailedError.details = errorData.error || errorData;
       detailedError.fullResponse = errorData;
       detailedError.endpoint = endpoint;
-      detailedError.rawResponse = errorText; // Garder la réponse brute pour le diagnostic
+      detailedError.rawResponse = errorText; // Keep the raw response for diagnostics
       
-      // Ajouter des informations supplémentaires pour les erreurs 403
+      // Add extra information for 403 errors
       if (response.status === 403) {
         detailedError.permissionIssue = true;
         detailedError.suggestion = 'L\'API Partner Center nécessite une authentification App+User (application + utilisateur connecté) plutôt qu\'App-only (client_credentials).\n\n' +
@@ -388,21 +388,21 @@ async function callPartnerCenterApi(endpoint, method = 'GET', body = null) {
 }
 
 // ───────────────────────────────────────────────
-// 📋 Fonction : Récupérer tous les partenaires (clients CSP)
+// 📋 Function: fetch all partners (CSP clients)
 // ───────────────────────────────────────────────
 async function getAllPartnersFromAPI() {
-  // Essayer plusieurs sources dans l'ordre :
-  // 1. Microsoft Graph /contracts (clients CSP - nécessite PartnerBilling.Read.All)
-  // 2. Microsoft Graph /organization (informations organisation)
-  // 3. Microsoft Graph /organization/relationships (relations organisation)
-  // 4. Partner Center API /customers (clients CSP - nécessite app dans Partner Center)
-  // 5. Microsoft Graph /policies/crossTenantAccessPolicy/partners (partenaires Azure AD - nécessite Policy.Read.All)
+  // Try several sources in order:
+  // 1. Microsoft Graph /contracts (CSP customers — requires PartnerBilling.Read.All)
+  // 2. Microsoft Graph /organization (organization information)
+  // 3. Microsoft Graph /organization/relationships (organization relationships)
+  // 4. Partner Center API /customers (CSP customers — requires app in Partner Center)
+  // 5. Microsoft Graph /policies/crossTenantAccessPolicy/partners (Azure AD partners — requires Policy.Read.All)
   
   const testedEndpoints = [];
   const errors = [];
   
-  // 1. Essayer Microsoft Graph /contracts pour les clients CSP
-  // Nécessite PartnerBilling.Read.All (Application) avec consentement administrateur
+  // 1. Try Microsoft Graph /contracts for CSP clients
+  // Requires PartnerBilling.Read.All (Application) with admin consent
   try {
     testedEndpoints.push('Microsoft Graph /contracts');
     const contractsResponse = await callGraphApi('/contracts');
@@ -415,7 +415,7 @@ async function getAllPartnersFromAPI() {
         testedEndpoints: testedEndpoints
       };
     } else if (contractsResponse.value && Array.isArray(contractsResponse.value) && contractsResponse.value.length === 0) {
-      // Aucun contrat CSP trouvé, continuer pour essayer d'autres endpoints
+      // No CSP contract found; continue trying other endpoints
       errors.push({ endpoint: 'Microsoft Graph /contracts', status: 'empty', message: 'Aucun contrat trouvé' });
     } else {
       errors.push({ endpoint: 'Microsoft Graph /contracts', status: 'unexpected', message: 'Structure de réponse inattendue', response: contractsResponse });
@@ -430,14 +430,14 @@ async function getAllPartnersFromAPI() {
     });
   }
   
-  // 2. Essayer Microsoft Graph /organization pour obtenir des informations sur l'organisation
+  // 2. Try Microsoft Graph /organization to fetch organization information
   try {
     testedEndpoints.push('Microsoft Graph /organization');
     const orgResponse = await callGraphApi('/organization');
     
     if (orgResponse.value && Array.isArray(orgResponse.value) && orgResponse.value.length > 0) {
-      // On peut extraire des informations mais ce n'est pas une liste de clients
-      // Continuer pour essayer d'autres endpoints
+      // Information can be extracted but this is not a client list
+      // Continue to try other endpoints
     }
   } catch (orgError) {
     errors.push({ 
@@ -447,13 +447,13 @@ async function getAllPartnersFromAPI() {
     });
   }
   
-  // 3. Essayer Microsoft Graph /organization/relationships (si disponible)
+  // 3. Try Microsoft Graph /organization/relationships (when available)
   try {
     testedEndpoints.push('Microsoft Graph /organization/relationships');
     const relationshipsResponse = await callGraphApi('/organization/relationships');
     
     if (relationshipsResponse.value && Array.isArray(relationshipsResponse.value) && relationshipsResponse.value.length > 0) {
-      // Normaliser les relations organisation
+      // Normalize organization relationships
       const partners = relationshipsResponse.value.map(rel => ({
         partner_id: rel.id || rel.targetTenantId || '',
         company_name: rel.displayName || rel.targetTenantName || '',
@@ -476,7 +476,7 @@ async function getAllPartnersFromAPI() {
       }
     }
   } catch (relError) {
-    // Cet endpoint peut ne pas exister, continuer
+    // When an endpoint may not exist, continue
     errors.push({ 
       endpoint: 'Microsoft Graph /organization/relationships', 
       status: relError.status || 'error', 
@@ -484,7 +484,7 @@ async function getAllPartnersFromAPI() {
     });
   }
   
-  // 2. Essayer Partner Center API avec plusieurs endpoints
+  // 2. Try Partner Center API with several endpoints
   // Documentation: https://learn.microsoft.com/en-us/partner-center/developer/partner-center-rest-api-reference
   const partnerCenterEndpoints = [
     '/customers?size=40',
@@ -499,20 +499,20 @@ async function getAllPartnersFromAPI() {
     try {
       const response = await callPartnerCenterApi(endpoint);
     
-      // La réponse Partner Center API peut avoir différentes structures selon l'endpoint
-      // Pour /customers : { "totalCount": number, "items": [...], "links": {...} }
-      // Pour /relationships : peut avoir une structure différente
-      // Pour /profiles/organization : informations sur l'organisation partenaire
+      // The Partner Center API response may have different structures depending on the endpoint
+      // For /customers: { "totalCount": number, "items": [...], "links": {...} }
+      // For /relationships: the structure may differ
+      // For /profiles/organization: partner organization information
       
       let allPartners = [];
       let partnersFound = false;
       
-      // Vérifier si la réponse contient des items (structure /customers)
+      // Check whether the response contains items (/customers structure)
       if (response.items && Array.isArray(response.items)) {
         allPartners = [...response.items];
         partnersFound = true;
         
-        // Gérer la pagination si nécessaire
+        // Handle pagination if needed
         let hasMore = true;
         let currentResponse = response;
         
@@ -541,23 +541,23 @@ async function getAllPartnersFromAPI() {
           }
         }
       } 
-      // Vérifier si c'est une réponse avec value (structure OData)
+      // Check whether the response has a value property (OData structure)
       else if (response.value && Array.isArray(response.value)) {
         allPartners = response.value;
         partnersFound = true;
       }
-      // Vérifier si c'est directement un tableau
+      // Check whether this is directly an array
       else if (Array.isArray(response)) {
         allPartners = response;
         partnersFound = true;
       }
-      // Pour /profiles/organization, on peut extraire des informations sur l'organisation
+      // For /profiles/organization, organization information can be extracted
       else if (response.organizationProfile || response.companyProfile) {
-        // C'est une réponse d'organisation, pas une liste de clients
-        // On peut l'utiliser pour vérifier que l'API fonctionne
+        // This is an organization response, not a customer list
+        // It can be used to verify that the API works
         partnersFound = false;
       }
-      // Vérifier totalCount = 0
+      // Check totalCount = 0
       else if (response.totalCount !== undefined) {
         if (response.totalCount === 0) {
           return {
@@ -573,7 +573,7 @@ async function getAllPartnersFromAPI() {
         }
       }
       
-      // Si on a trouvé des partenaires, les normaliser et les retourner
+      // If partners were found, normalize and return them
       if (partnersFound && allPartners.length > 0) {
         return {
           partners: normalizePartners(allPartners),
@@ -582,16 +582,16 @@ async function getAllPartnersFromAPI() {
         };
       }
       
-      // Si la réponse est valide mais vide, continuer avec le prochain endpoint
+      // If the response is valid but empty, continue with the next endpoint
       if (partnersFound && allPartners.length === 0) {
         continue;
       }
       
-      // Si c'est une structure inattendue mais valide, continuer
+      // If the structure is unexpected but valid, continue
       continue;
       
     } catch (error) {
-      // Sauvegarder la dernière erreur pour le message final avec tous les détails
+      // Store the last error for the final message with all details
       lastPartnerCenterError = {
         endpoint: endpoint,
         status: error.status,
@@ -604,19 +604,19 @@ async function getAllPartnersFromAPI() {
         suggestion: error.suggestion
       };
       
-      // Si c'est une erreur 403 ou 401, continuer pour essayer d'autres endpoints
-      // mais on garde l'info pour le message final
+      // If this is a 403 or 401 error, continue trying other endpoints
+      // but keep it for the final message
       if (error.status === 403 || error.status === 401) {
         continue;
       }
-      // Pour les autres erreurs, continuer aussi
+      // For other errors, continue as well
       continue;
     }
   }
   
-      // Si tous les endpoints Partner Center ont échoué, retourner les détails de l'erreur
+      // If all Partner Center endpoints failed, return error details
   if (lastPartnerCenterError) {
-    // Construire un message d'erreur détaillé
+    // Build a detailed error message
     let errorMessage = '';
     if (lastPartnerCenterError.status === 403) {
       errorMessage = `Accès refusé (403) à l'API Partner Center - Endpoint: ${lastPartnerCenterError.endpoint}`;
@@ -685,7 +685,7 @@ async function getAllPartnersFromAPI() {
     };
   }
   
-  // 4. Essayer Microsoft Graph /policies/crossTenantAccessPolicy/partners (avec Policy.Read.All)
+  // 4. Try Microsoft Graph /policies/crossTenantAccessPolicy/partners (with Policy.Read.All)
   try {
     testedEndpoints.push('Microsoft Graph /policies/crossTenantAccessPolicy/partners');
     const graphResponse = await callGraphApi('/policies/crossTenantAccessPolicy/partners');
@@ -698,7 +698,7 @@ async function getAllPartnersFromAPI() {
         testedEndpoints: testedEndpoints
       };
     } else if (graphResponse.value && Array.isArray(graphResponse.value) && graphResponse.value.length === 0) {
-      // Aucun partenaire dans les politiques d'accès inter-locataires
+      // No partners in cross-tenant access policies
       errors.push({ 
         endpoint: 'Microsoft Graph /policies/crossTenantAccessPolicy/partners', 
         status: 'empty', 
@@ -715,7 +715,7 @@ async function getAllPartnersFromAPI() {
     });
   }
   
-  // Si tous les endpoints ont échoué, retourner une erreur détaillée avec tous les tests effectués
+  // If all endpoints failed, return a detailed error with all tests performed
   return {
     partners: [],
     source: 'inconnue',
@@ -740,13 +740,13 @@ async function getAllPartnersFromAPI() {
   };
 }
 
-// Fonction pour normaliser les partenaires depuis Microsoft Graph Cross-Tenant Access Policy
+// Function to normalize partners from Microsoft Graph Cross-Tenant Access Policy
 // Documentation: https://learn.microsoft.com/en-us/graph/api/crosstenantaccesspolicy-list-partners
 function normalizePartnersFromGraphCrossTenant(partners) {
   return partners.map(partner => {
     const tenantId = partner.tenantId || '';
     
-    // Essayer de récupérer le nom du tenant depuis l'identité de synchronisation si disponible
+    // Try to fetch the tenant name from the sync identity when available
     const displayName = partner.identitySynchronization?.displayName || 
                        partner.displayName || 
                        `Tenant ${tenantId.substring(0, 8)}...`;
@@ -754,7 +754,7 @@ function normalizePartnersFromGraphCrossTenant(partners) {
     return {
       partner_id: tenantId,
       company_name: displayName,
-      domain: '', // Les domaines ne sont pas directement disponibles dans cette réponse
+      domain: '', // Domains are not directly available in this response
       relationship_to_partner: partner.isInMultiTenantOrganization ? 'Multi-tenant organization' : 'Cross-tenant access',
       mpn_id: '',
       location_country: '',
@@ -765,7 +765,7 @@ function normalizePartnersFromGraphCrossTenant(partners) {
   });
 }
 
-// Fonction pour normaliser les partenaires depuis Microsoft Graph Contracts (CSP)
+// Function to normalize partners from Microsoft Graph Contracts (CSP)
 function normalizePartnersFromGraph(contracts) {
   return contracts.map(contract => ({
     partner_id: contract.customerId || contract.id || '',
@@ -780,24 +780,24 @@ function normalizePartnersFromGraph(contracts) {
   }));
 }
 
-// Fonction pour normaliser les partenaires depuis Partner Center API
-// Gère différentes structures de réponse selon l'endpoint utilisé
+// Function to normalize partners from the Partner Center API
+// Handle different response structures depending on the endpoint used
 // - /customers : { "id": "...", "companyProfile": { "companyName": "...", "tenantId": "...", ... }, "relationshipToPartner": "..." }
-// - /relationships : peut avoir une structure différente
+// - /relationships: the structure may differ
 function normalizePartners(partners) {
   return partners.map(partner => {
-    // L'ID du client est dans partner.id (identifiant unique du client dans Partner Center)
-    // Le tenantId Azure AD est dans partner.companyProfile.tenantId
+    // The client ID is in partner.id (unique client identifier in Partner Center)
+    // The Azure AD tenantId is in partner.companyProfile.tenantId
     const customerId = partner.id || partner.customerId || partner.partnerId || '';
     const tenantId = partner.companyProfile?.tenantId || 
                      partner.tenantId || 
                      partner.companyProfile?.organizationId || 
                      '';
     
-    // Utiliser le tenantId comme identifiant principal si disponible, sinon l'ID du client
+    // Use tenantId as the primary identifier when available, otherwise client ID
     const partnerId = tenantId || customerId;
     
-    // Le nom de l'entreprise peut être dans plusieurs endroits selon la structure
+    // Company name may appear in several fields depending on structure
     const companyName = partner.companyProfile?.companyName || 
                        partner.companyName || 
                        partner.name || 
@@ -805,19 +805,19 @@ function normalizePartners(partners) {
                        partner.organizationName ||
                        '';
     
-    // Le domaine peut être dans plusieurs endroits
+    // Domain may appear in several fields
     const domain = partner.companyProfile?.domain || 
                   partner.domain || 
                   partner.companyProfile?.defaultDomainName ||
                   '';
     
-    // MPN ID peut être dans plusieurs endroits
+    // MPN ID may appear in several fields
     const mpnId = partner.companyProfile?.mpnId || 
                  partner.mpnId || 
                  partner.partnerId ||
                  '';
     
-    // Adresse peut être dans plusieurs endroits
+    // Address may appear in several fields
     const country = partner.companyProfile?.address?.country || 
                    partner.address?.country || 
                    partner.country || 
@@ -829,15 +829,15 @@ function normalizePartners(partners) {
                 partner.companyProfile?.city ||
                 '';
     
-    // Relation au partenaire (reseller, indirect-reseller, etc.)
+    // Relationship to partner (reseller, indirect-reseller, etc.)
     const relationship = partner.relationshipToPartner || 
                        partner.relationship || 
                        partner.type ||
                        'reseller';
 
     return {
-      partner_id: partnerId || customerId, // Utiliser tenantId si disponible, sinon customerId
-      company_name: companyName || `Client ${customerId.substring(0, 8)}...`, // Fallback si pas de nom
+      partner_id: partnerId || customerId, // Use tenantId when available, otherwise customerId
+      company_name: companyName || `Client ${customerId.substring(0, 8)}...`, // Fallback when no name is available
       domain: domain,
       relationship_to_partner: relationship,
       mpn_id: mpnId,
@@ -857,18 +857,18 @@ function extractContinuationToken(nextLink) {
 
 
 // ───────────────────────────────────────────────
-// 🔄 Fonction : Synchroniser les partenaires
+// 🔄 Function: synchronize partners
 // ───────────────────────────────────────────────
 async function syncPartners() {
   try {
-    // 1. Récupérer tous les partenaires depuis l'API
+    // 1. Fetch all partners from the API
     const apiResult = await getAllPartnersFromAPI();
     const apiPartners = apiResult.partners || [];
     const source = apiResult.source;
     const errorInfo = apiResult.errorInfo;
     const testedEndpoints = apiResult.testedEndpoints || apiResult.errorInfo?.testedEndpoints || [];
 
-    // 2. Récupérer tous les partenaires en base
+    // 2. Fetch all partners in the database
     const dbResult = await pool.query('SELECT * FROM v_b_s_ms_partner');
     const dbPartners = dbResult.rows;
     const dbPartnersMap = new Map(dbPartners.map(p => [p.partner_id, p]));
@@ -880,15 +880,15 @@ async function syncPartners() {
       unchanged: 0
     };
 
-    // 3. Comparer et synchroniser
+    // 3. Compare and synchronize
     const apiPartnersMap = new Map(apiPartners.map(p => [p.partner_id, p]));
 
-    // Créer ou mettre à jour les partenaires de l'API
+    // Create or update API partners
     for (const apiPartner of apiPartners) {
       const dbPartner = dbPartnersMap.get(apiPartner.partner_id);
 
       if (!dbPartner) {
-        // Nouveau partenaire à créer
+        // New partner to create
         await pool.query(
           `INSERT INTO v_b_s_ms_partner 
            (partner_id, company_name, domain, relationship_to_partner, mpn_id, 
@@ -908,7 +908,7 @@ async function syncPartners() {
         );
         stats.created++;
       } else {
-        // Vérifier si des modifications sont nécessaires
+        // Check whether updates are needed
         const hasChanges = 
           dbPartner.company_name !== apiPartner.company_name ||
           dbPartner.domain !== apiPartner.domain ||
@@ -918,7 +918,7 @@ async function syncPartners() {
           dbPartner.location_city !== apiPartner.location_city;
 
         if (hasChanges) {
-          // Mettre à jour le partenaire
+          // Update partner
           await pool.query(
             `UPDATE v_b_s_ms_partner 
              SET company_name = $1, domain = $2, relationship_to_partner = $3,
@@ -939,7 +939,7 @@ async function syncPartners() {
           );
           stats.updated++;
         } else {
-          // Mettre à jour seulement last_synced_at
+          // Update only last_synced_at
           await pool.query(
             'UPDATE v_b_s_ms_partner SET last_synced_at = NOW() WHERE partner_id = $1',
             [apiPartner.partner_id]
@@ -949,7 +949,7 @@ async function syncPartners() {
       }
     }
 
-    // 4. Identifier les partenaires supprimés (marquer comme inactif)
+    // 4. Identify deleted partners (mark as inactive)
     for (const dbPartner of dbPartnersMap.values()) {
       if (!apiPartnersMap.has(dbPartner.partner_id)) {
         await pool.query(
@@ -960,7 +960,7 @@ async function syncPartners() {
       }
     }
     
-    // Message d'avertissement si aucun partenaire trouvé
+    // Warning message when no partner is found
     let warning = null;
     let diagnosticMessage = null;
     
@@ -1027,29 +1027,29 @@ async function syncPartners() {
 }
 
 // ───────────────────────────────────────────────
-// 📋 Fonction : Récupérer les informations de l'application Azure AD
+// 📋 Function: fetch Azure AD application information
 // ───────────────────────────────────────────────
 async function getApplicationInfo(clientId) {
   try {
-    // Récupérer les informations de l'application via Microsoft Graph
-    // On peut utiliser /applications avec un filtre sur appId
+    // Fetch application information via Microsoft Graph
+    // We can use /applications with a filter on appId
     const response = await callGraphApi(`/applications?$filter=appId eq '${clientId}'`);
     
     if (response.value && response.value.length > 0) {
       const app = response.value[0];
       const appName = app.displayName || app.appDisplayName || 'Application inconnue';
       
-      // Récupérer les secrets/password credentials
+      // Fetch secrets/password credentials
       let secretExpiry = null;
       let secretError = null;
       try {
         const credentialsResponse = await callGraphApi(`/applications/${app.id}/passwordCredentials`);
         if (credentialsResponse.value && credentialsResponse.value.length > 0) {
-          // Trouver le secret qui correspond (on ne peut pas comparer directement, donc on prend le plus récent)
+          // Find the matching secret (cannot compare directly, so take the most recent one)
           const secrets = credentialsResponse.value.sort((a, b) => {
             const dateA = a.endDateTime ? new Date(a.endDateTime) : new Date(0);
             const dateB = b.endDateTime ? new Date(b.endDateTime) : new Date(0);
-            return dateB - dateA; // Plus récent en premier
+            return dateB - dateA; // Most recent first
           });
           
           if (secrets.length > 0 && secrets[0].endDateTime) {
@@ -1060,7 +1060,7 @@ async function getApplicationInfo(clientId) {
         secretError = credError.status === 403 
           ? 'Permissions insuffisantes (Application.Read.All requis)'
           : credError.message;
-        // On continue sans la date d'expiration
+        // Continue without expiration date
       }
       
       return {
@@ -1076,7 +1076,7 @@ async function getApplicationInfo(clientId) {
       secretError: null
     };
   } catch (error) {
-    // Si c'est une erreur 403, donner plus de détails
+    // If this is a 403 error, provide more details
     if (error.status === 403) {
       const isConsentIssue = error.code === 'Authorization_RequestDenied';
       return {
@@ -1101,7 +1101,7 @@ async function getApplicationInfo(clientId) {
 }
 
 // ───────────────────────────────────────────────
-// 🧪 Route : Test de connexion
+// 🧪 Route: connection test
 // ───────────────────────────────────────────────
 router.post('/test', async (req, res) => {
   try {
@@ -1115,7 +1115,7 @@ router.post('/test', async (req, res) => {
       });
     }
 
-    // Tester l'authentification Microsoft Graph (pour les infos de l'application)
+    // Test Microsoft Graph authentication (for application info)
     const graphToken = await getGraphAccessToken();
     
     if (!graphToken) {
@@ -1126,18 +1126,18 @@ router.post('/test', async (req, res) => {
       });
     }
 
-    // Tester l'authentification Partner Center
+    // Test Partner Center authentication
     let partnerCenterToken = null;
     try {
       partnerCenterToken = await getPartnerCenterAccessToken();
     } catch (pcError) {
-      // On continue quand même pour tester Graph
+      // Continue anyway to test Graph
     }
 
-    // Récupérer les informations de l'application
+    // Fetch application information
     const appInfo = await getApplicationInfo(settings.clientId);
     
-    // Vérifier si l'application est multi-tenant (nécessaire pour accéder aux tenants clients)
+    // Check whether the app is multi-tenant (required to access customer tenants)
     let multiTenantInfo = null;
     try {
       const graphToken = await getGraphAccessToken();
@@ -1162,13 +1162,13 @@ router.post('/test', async (req, res) => {
         }
       }
     } catch (mtError) {
-      // Ignorer l'erreur
+      // Ignore the error
     }
 
-    // Vérifier les permissions dans le token
+    // Check permissions in token
     const tokenPermissions = await checkTokenPermissions();
     
-    // Tenter de récupérer les partenaires pour le test
+    // Try to fetch partners for the test
     try {
       const result = await getAllPartnersFromAPI();
       const partners = result.partners || [];
@@ -1176,7 +1176,7 @@ router.post('/test', async (req, res) => {
       const errorInfo = result.errorInfo;
       
       if (partners.length === 0) {
-        // Authentification réussie mais aucun partenaire trouvé
+        // Authentication succeeded but no partner was found
         let warning = 'Aucun partenaire trouvé.\n\n' +
                      '📋 TYPES DE PARTENAIRES (IMPORTANT - Ce sont des choses différentes !) :\n\n' +
                      '1. CLIENTS CSP PARTNER CENTER (ce que vous voyez dans Partner Center)\n' +
@@ -1199,7 +1199,7 @@ router.post('/test', async (req, res) => {
                      '- Le consentement administrateur a été accordé\n' +
                      '- L\'application est ajoutée dans Partner Center';
         } else {
-          // Utiliser les informations d'erreur détaillées si disponibles
+          // Use detailed error information when available
           if (errorInfo && errorInfo.type === 'permission') {
             warning += `❌ ERREUR DÉTECTÉE : ${errorInfo.message}\n\n` +
                      '🔴 PERMISSION MICROSOFT GRAPH MANQUANTE\n\n' +
@@ -1299,7 +1299,7 @@ router.post('/test', async (req, res) => {
         tokenPermissions: tokenPermissions
       });
     } catch (apiError) {
-      // Si l'auth fonctionne mais l'API échoue, c'est peut-être un problème de permissions
+      // If auth works but the API fails, it may be a permissions issue
       let permissionMessage = '';
       if (apiError.status === 403 && apiError.code === 'Authorization_RequestDenied') {
         permissionMessage = '\n\n❌ ERREUR 403 - CONSENTEMENT ADMINISTRATEUR REQUIS\n\n' +
@@ -1418,7 +1418,7 @@ router.post('/test', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📋 Route : Récupérer tous les partenaires
+// 📋 Route: fetch all partners
 // ───────────────────────────────────────────────
 router.get('/partners', async (req, res) => {
   try {
@@ -1430,13 +1430,13 @@ router.get('/partners', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔄 Route : Synchroniser les partenaires
+// 🔄 Route: synchronize partners
 // ───────────────────────────────────────────────
 router.post('/partners/sync', async (req, res) => {
   try {
     const result = await syncPartners();
     
-    // Ajouter des informations de diagnostic supplémentaires
+    // Add extra diagnostic information
     const diagnosticInfo = {
       source: result.source,
       errorInfo: result.errorInfo,
@@ -1467,7 +1467,7 @@ router.post('/partners/sync', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📊 Route : Statistiques de synchronisation
+// 📊 Route: synchronization statistics
 // ───────────────────────────────────────────────
 router.get('/partners/sync/stats', async (req, res) => {
   try {

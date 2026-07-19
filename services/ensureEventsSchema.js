@@ -65,25 +65,22 @@ export async function ensureEventsSchema() {
   try {
     const migrationPath = path.join(root, TICKET_ID_MIGRATION);
     if (!fs.existsSync(migrationPath)) {
-      console.warn(`[events] Migration introuvable : ${TICKET_ID_MIGRATION}`);
+      console.warn(`[events] Migration not found: ${TICKET_ID_MIGRATION}`);
       schemaCache = { hasTicketId: false };
       return schemaCache;
     }
 
-    console.log("[events] Colonne ticket_id absente — application de la migration…");
     await client.query(fs.readFileSync(migrationPath, "utf8"));
 
     const applied = await columnExists(client, "ticket_id");
     schemaCache = { hasTicketId: applied };
     ensured = true;
-    if (applied) {
-      console.log("[events] Schéma événements (ticket_id) prêt.");
-    } else {
-      console.warn("[events] Migration terminée mais ticket_id toujours absent.");
+    if (!applied) {
+      console.warn("[events] Migration ran but ticket_id is still missing.");
     }
     return schemaCache;
   } catch (err) {
-    console.error("[events] Échec migration ticket_id:", err.message);
+    console.error("[events] ticket_id migration failed:", err.message);
     schemaCache = { hasTicketId: false };
     return schemaCache;
   } finally {

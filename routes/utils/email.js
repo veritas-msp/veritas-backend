@@ -1,30 +1,30 @@
 // ───────────────────────────────────────────────
-// 📦 Imports principaux
+// 📦 Main imports
 // ───────────────────────────────────────────────
-import express from "express"; // Framework HTTP
-import { sendMail } from "../../utils/sendMail.js"; // Utilitaire centralisé pour l'envoi d'emails
+import express from "express"; // HTTP framework
+import { sendMail } from "../../utils/sendMail.js"; // Centralized email sending utility
 import { veritasTemplate } from "./mailer.js";
 import verifyJWT from "../../middleware/auth.js";
 
-const router = express.Router(); // Initialisation du routeur Express
+const router = express.Router(); // Initialize Express router
 router.use(verifyJWT);
 
 // ───────────────────────────────────────────────
-// 📧 POST — Envoi du rapport de monitoring par email
+// 📧 POST — Send monitoring report by email
 // ───────────────────────────────────────────────
 router.post("/send-monitoring-report", async (req, res) => {
   const { emails, html, infos } = req.body;
 
-  // Vérification des champs requis
+  // Validate required fields
   if (!emails || !Array.isArray(emails) || !html) {
     return res.status(400).json({ error: "Champs requis manquants." });
   }
 
   try {
-    // Sujet du mail
+    // Email subject
     const subject = `📊 PSI - Rapport de monitoring`;
 
-    // Contenu HTML affiché dans le corps du mail
+    // HTML body shown in the email
     const bodyHTML = veritasTemplate({
       title: ``,
       content: `
@@ -56,7 +56,7 @@ router.post("/send-monitoring-report", async (req, res) => {
       `,
     });
 
-    // Envoi de l'email avec pièce jointe
+    // Send email with attachment
     await sendMail({
       to: emails,
       subject,
@@ -64,14 +64,14 @@ router.post("/send-monitoring-report", async (req, res) => {
       htmlContent: bodyHTML,
       attachments: [
         {
-          filename: `rapport-monitoring.html`, // Nom du fichier attaché
-          content: html,                      // Contenu HTML fourni par le frontend
-          contentType: "text/html",           // Type MIME
+          filename: `rapport-monitoring.html`, // Attachment filename
+          content: html,                      // HTML content provided by the frontend
+          contentType: "text/html",           // MIME type
         },
       ],
     });
 
-    // Réponse succès
+    // Success response
     res.status(200).json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Erreur lors de l'envoi." });
@@ -79,7 +79,7 @@ router.post("/send-monitoring-report", async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📧 POST — Envoi du Compte Rendu AV par email
+// 📧 POST — Send CRAV report by email
 // ───────────────────────────────────────────────
 router.post("/send-crav-report", async (req, res) => {
   const { emails, html, infos } = req.body;
@@ -132,18 +132,18 @@ router.post("/send-crav-report", async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📧 POST /send-campaign-email — Envoi d'email pour une étape de campagne
+// 📧 POST /send-campaign-email — Send email for a campaign step
 // ───────────────────────────────────────────────
 router.post("/send-campaign-email", async (req, res) => {
   const { to, subject, content, stepId, campaignId, clientId } = req.body;
 
-  // Vérification des champs requis
+  // Validate required fields
   if (!to || !subject || !content || !stepId || !campaignId || !clientId) {
     return res.status(400).json({ error: "Champs requis manquants." });
   }
 
   try {
-    // Envoi de l'email - sendMail applique déjà veritasTemplate
+    // sendMail already applies veritasTemplate
     await sendMail({
       to: to,
       subject: subject,
@@ -151,13 +151,12 @@ router.post("/send-campaign-email", async (req, res) => {
       htmlContent: content.replace(/\n/g, '<br>')
     });
 
-    // Réponse succès
+    // Success response
     res.status(200).json({ success: true, message: "Email envoyé avec succès" });
   } catch (err) {
-    console.error('Erreur lors de l\'envoi de l\'email de campagne:', err);
+    console.error('Error sending campaign email:', err);
     res.status(500).json({ error: "Erreur lors de l'envoi de l'email.", details: err.message });
   }
 });
 
 export default router;
-

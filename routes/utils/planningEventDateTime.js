@@ -1,6 +1,6 @@
 /**
- * v_b_events.start / end sont TIMESTAMP WITHOUT TIME ZONE :
- * on conserve l'horloge murale (Europe/Paris côté utilisateur), sans conversion UTC.
+ * v_b_events.start / end are TIMESTAMP WITHOUT TIME ZONE:
+ * wall-clock time is preserved (Europe/Paris on the user side), without UTC conversion.
  */
 
 const WALL_CLOCK_RE =
@@ -15,7 +15,7 @@ function formatWallClockFromParts(year, month, day, hours, minutes, seconds = 0)
 }
 
 /**
- * Normalise une entrée API en "YYYY-MM-DD HH:mm:ss" pour PostgreSQL.
+ * Normalizes an API input to "YYYY-MM-DD HH:mm:ss" for PostgreSQL.
  */
 export function normalizePlanningEventDateInput(value) {
   if (value == null || value === "") return null;

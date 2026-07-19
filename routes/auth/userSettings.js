@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📦 Imports principaux
+// 📦 Main imports
 // ───────────────────────────────────────────────
 import express from 'express';
 import { pool } from '../../database/db.js';
@@ -14,7 +14,7 @@ import { upsertUserSetting } from '../../utils/userSettingsStore.js';
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 📥 GET /api/user-settings/:key — Récupérer un paramètre utilisateur
+// 📥 GET /api/user-settings/:key — Fetch a user setting
 // ───────────────────────────────────────────────
 router.get('/:key', verifyJWT, async (req, res) => {
   try {
@@ -34,13 +34,13 @@ router.get('/:key', verifyJWT, async (req, res) => {
 
     res.json({ value: result.rows[0].setting_value });
   } catch (err) {
-    console.error('Erreur lors de la récupération du paramètre:', err);
+    console.error('Error fetching setting:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
 // ───────────────────────────────────────────────
-// 💾 POST /api/user-settings/:key — Sauvegarder un paramètre utilisateur
+// 💾 POST /api/user-settings/:key — Save a user setting
 // ───────────────────────────────────────────────
 router.post('/:key', verifyJWT, async (req, res) => {
   try {
@@ -72,13 +72,13 @@ router.post('/:key', verifyJWT, async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Erreur lors de la sauvegarde du paramètre:', err);
+    console.error('Error saving setting:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📋 GET /api/user-settings — Récupérer tous les paramètres utilisateur
+// 📋 GET /api/user-settings — Fetch all user settings
 // ───────────────────────────────────────────────
 router.get('/', verifyJWT, async (req, res) => {
   try {
@@ -98,7 +98,7 @@ router.get('/', verifyJWT, async (req, res) => {
 
     res.json(settings);
   } catch (err) {
-    console.error('Erreur lors de la récupération des paramètres:', err);
+    console.error('Error fetching settings:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });

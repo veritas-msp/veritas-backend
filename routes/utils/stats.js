@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────
-// 📊 ROUTE /api/stats — Statistiques globales
+// 📊 ROUTE /api/stats — Global statistics
 // ─────────────────────────────────────────────
 
 import express from 'express';
@@ -16,7 +16,7 @@ import { fetchMonitorableEquipmentStats } from '../../utils/monitorableEquipment
 import { getEditionPayload, isCommunity } from '../../utils/edition.js';
 import { fetchAnalyticsDashboard } from '../../services/dashboardAnalyticsService.js';
 
-const router = express.Router(); // Initialisation du routeur Express
+const router = express.Router(); // Initialize Express router
 
 router.use(verifyJWT);
 
@@ -35,7 +35,7 @@ const FIRST_TAKEOVER_AT_SQL = `(SELECT h.created_at
            ORDER BY h.created_at ASC
            LIMIT 1) AS first_takeover_at`;
 
-/** Comptes portail contact (role client) — exclus du décompte agents MSP */
+/** Contact portal accounts (client role) — excluded from MSP agent counts */
 const ACTIVE_AGENTS_COUNT_SQL = `
   SELECT COUNT(*)::int AS count
   FROM v_b_users
@@ -51,8 +51,8 @@ const RMM_AGENTS_COUNT_SQL = `
 
 const CONTRACT_EXPIRING_WINDOW_DAYS = 30;
 
-// Jobs sauvegarde : lignes item_key "job-…", ou data.type === "job", ou JSON instances[].jobs / jobs racine.
-// Aligné sur transformClientModules (Sauvegarde).
+// Backup jobs: rows with item_key "job-…", or data.type === "job", or JSON instances[].jobs / root-level jobs.
+// Aligned with transformClientModules (Backup).
 function countAllBackupJobsFromSaveRows(rows) {
   let n = 0;
   for (const row of rows) {
@@ -89,7 +89,7 @@ function countAllBackupJobsFromSaveRows(rows) {
 }
 
 // ─────────────────────────────────────────────
-// 📈 GET /api/stats/users — Statistiques utilisateurs
+// 📈 GET /api/stats/users — User statistics
 // ─────────────────────────────────────────────
 router.get('/users', async (req, res) => {
   try {
@@ -113,7 +113,7 @@ router.get('/users', async (req, res) => {
 
 
 // ─────────────────────────────────────────────
-// 📈 GET /api/stats/clients — Statistiques clients monitorés
+// 📈 GET /api/stats/clients — Monitored client statistics
 // ─────────────────────────────────────────────
 router.get("/clients", async (req, res) => {
   try {
@@ -138,10 +138,10 @@ router.get("/clients", async (req, res) => {
     for (const client of clients) {
       const { id, report_frequency } = client;
       
-      // Charger les équipements depuis les nouvelles tables
+      // Load equipment from module tables
       let equipements = {};
       try {
-        // Serveurs
+        // Servers
         const serversResult = await pool.query(
           `SELECT data FROM v_b_clients_m_servers WHERE client_id = $1 AND data IS NOT NULL`,
           [id]
@@ -155,7 +155,7 @@ router.get("/clients", async (req, res) => {
         );
         equipements.NAS = nasResult.rows.map(row => row.data);
         
-        // NDD
+        // Domains (NDD)
         const nddResult = await pool.query(
           `SELECT data FROM v_b_clients_m_ndd WHERE client_id = $1 AND data IS NOT NULL`,
           [id]
@@ -180,7 +180,7 @@ router.get("/clients", async (req, res) => {
           equipements.Antivirus = antivirusResult.rows[0].data;
         }
         
-        // Sauvegarde (plusieurs lignes : instances + jobs item_key job-*)
+        // Backup (multiple rows: snapshot + jobs with item_key job-*)
         const saveResult = await pool.query(
           `SELECT item_key, data FROM v_b_clients_m_save WHERE client_id = $1 AND data IS NOT NULL`,
           [id]
@@ -201,10 +201,10 @@ router.get("/clients", async (req, res) => {
       } catch (err) {
       }
 
-      // 🔁 Fréquence des rapports
+      // 🔁 Report frequency
       reportFreqCount[report_frequency] = (reportFreqCount[report_frequency] || 0) + 1;
 
-      // 🖥️ Serveurs
+      // 🖥️ Servers
       const serveurs = equipements?.Serveurs || [];
       for (const srv of serveurs) {
         if (srv?.type === "physique") physicalServers++;
@@ -222,7 +222,7 @@ router.get("/clients", async (req, res) => {
         maxNAS += Number(n.nbDisquesMax || 0);
       }
 
-      // 🌐 NDD
+      // 🌐 Domains
       totalDomains += (equipements?.NDD || []).length;
 
       // ✉️ Antispam
@@ -239,7 +239,7 @@ router.get("/clients", async (req, res) => {
       totalLicencesO365 += (equipements?.Office365?.licences || []).reduce((sum, l) => sum + Number(l.total || 0), 0);
     }
 
-    // 📊 Pourcentages et moyennes
+    // 📊 Percentages and averages
     const percentPhysical = totalServers ? Math.round((physicalServers / totalServers) * 100) : 0;
     const percentVirtual = totalServers ? Math.round((virtualServers / totalServers) * 100) : 0;
     const averageServersPerClient = totalClients ? (totalServers / totalClients).toFixed(2) : "0.00";
@@ -270,7 +270,7 @@ router.get("/clients", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// 📈 GET /api/stats/reports — Statistiques des rapports générés
+// 📈 GET /api/stats/reports — Generated report statistics
 // ─────────────────────────────────────────────
 router.get('/reports', async (req, res) => {
   try {
@@ -287,15 +287,15 @@ router.get('/reports', async (req, res) => {
 
     const stats = result.rows[0];
     
-    // Calcul du temps économisé
-    // Temps normal sans app: 4 heures = 240 minutes
-    // Temps avec app: 12.5 minutes (moyenne entre 10-15 min)
-    // Temps économisé par rapport: 240 - 12.5 = 227.5 minutes = 3h47min30s
-    const timeSavedPerReport = 227.5; // en minutes
+    // Time saved calculation
+    // Normal time without app: 4 hours = 240 minutes
+    // Time with app: 12.5 minutes (average between 10–15 min)
+    // Time saved per report: 240 - 12.5 = 227.5 minutes = 3h47min30s
+    const timeSavedPerReport = 227.5; // in minutes
     const totalTimeSaved = stats.total_reports * timeSavedPerReport;
-    const totalTimeSavedHours = Math.round(totalTimeSaved / 60 * 100) / 100; // arrondi à 2 décimales
+    const totalTimeSavedHours = Math.round(totalTimeSaved / 60 * 100) / 100; // rounded to 2 decimals
     
-    // Valeur monétaire (242.80€ pour 8h de travail)
+    // Monetary value (242.80€ for 8 hours of work)
     const hourlyRate = 242.80 / 8; // 30.35€/h
     const monetaryValue = Math.round(totalTimeSavedHours * hourlyRate * 100) / 100;
 
@@ -312,7 +312,7 @@ router.get('/reports', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// 📈 GET /api/stats/home-kpis — KPI simples pour la page d'accueil
+// 📈 GET /api/stats/home-kpis — Simple KPIs for home page
 // ─────────────────────────────────────────────
 
 async function countOrZero(sql, params = []) {

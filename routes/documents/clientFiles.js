@@ -5,6 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { pool } from "../../database/db.js";
 import verifyJWT from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/permissions.js";
 import { resolveFileUploadedBy } from "../../utils/fileUploadedBy.js";
 import {
   ensureVisibleToClientColumn,
@@ -67,7 +68,7 @@ async function resolveVisibilitySelect() {
 // ─────────────────────────────────────────────────────────
 // GET /api/client-files?clientId=&category=
 // ─────────────────────────────────────────────────────────
-router.get("/", verifyJWT, async (req, res) => {
+router.get("/", verifyJWT, requirePermission("documents.view"), async (req, res) => {
   try {
     const { clientId, category } = req.query;
     const conditions = ["is_deleted = FALSE"];
@@ -100,7 +101,7 @@ router.get("/", verifyJWT, async (req, res) => {
 // ─────────────────────────────────────────────────────────
 // POST /api/client-files  (multipart/form-data)
 // ─────────────────────────────────────────────────────────
-router.post("/", verifyJWT, upload.single("file"), async (req, res) => {
+router.post("/", verifyJWT, requirePermission("documents.create"), upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "Aucun fichier reçu." });
 
@@ -162,7 +163,7 @@ router.post("/", verifyJWT, upload.single("file"), async (req, res) => {
 // ─────────────────────────────────────────────────────────
 // GET /api/client-files/:id/download
 // ─────────────────────────────────────────────────────────
-router.get("/:id/download", verifyJWT, async (req, res) => {
+router.get("/:id/download", verifyJWT, requirePermission("documents.view"), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT file_path, file_name, mime_type FROM v_b_client_files WHERE id = $1 AND is_deleted = FALSE`,
@@ -186,7 +187,7 @@ router.get("/:id/download", verifyJWT, async (req, res) => {
 // ─────────────────────────────────────────────────────────
 // GET /api/client-files/:id/preview
 // ─────────────────────────────────────────────────────────
-router.get("/:id/preview", verifyJWT, async (req, res) => {
+router.get("/:id/preview", verifyJWT, requirePermission("documents.view"), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT file_path, file_name, mime_type FROM v_b_client_files WHERE id = $1 AND is_deleted = FALSE`,
@@ -208,9 +209,9 @@ router.get("/:id/preview", verifyJWT, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────
-// PATCH /api/client-files/:id  (métadonnées — agents)
 // ─────────────────────────────────────────────────────────
-router.patch("/:id", verifyJWT, async (req, res) => {
+// ─────────────────────────────────────────────────────────
+router.patch("/:id", verifyJWT, requirePermission("documents.edit"), async (req, res) => {
   try {
     const role = String(req.user?.role || "").toLowerCase();
     if (role === "client") {
@@ -273,7 +274,7 @@ router.patch("/:id", verifyJWT, async (req, res) => {
 // ─────────────────────────────────────────────────────────
 // DELETE /api/client-files/:id  (soft delete)
 // ─────────────────────────────────────────────────────────
-router.delete("/:id", verifyJWT, async (req, res) => {
+router.delete("/:id", verifyJWT, requirePermission("documents.delete"), async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE v_b_client_files SET is_deleted = TRUE, updated_at = NOW()

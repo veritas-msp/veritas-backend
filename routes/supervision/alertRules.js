@@ -1,5 +1,6 @@
 import express from "express";
 import verifyJWT from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/permissions.js";
 import {
   buildDefaultSupervisionAlertRules,
   getSupervisionAlertRules,
@@ -9,14 +10,7 @@ import {
 
 const router = express.Router();
 
-function requireAdmin(req, res, next) {
-  if (String(req.user?.role || "").toLowerCase() !== "admin") {
-    return res.status(403).json({ error: "Accès réservé aux administrateurs" });
-  }
-  return next();
-}
-
-router.get("/", verifyJWT, async (_req, res) => {
+router.get("/", verifyJWT, requirePermission("supervision.view"), async (_req, res) => {
   try {
     const rules = await getSupervisionAlertRules({ fresh: true });
     res.json(getSupervisionAlertRulesPayload(rules));
@@ -26,7 +20,7 @@ router.get("/", verifyJWT, async (_req, res) => {
   }
 });
 
-router.put("/", verifyJWT, requireAdmin, async (req, res) => {
+router.put("/", verifyJWT, requirePermission("supervision.manage"), async (req, res) => {
   try {
     const incoming = req.body?.rules;
     if (!incoming || typeof incoming !== "object") {
@@ -40,7 +34,7 @@ router.put("/", verifyJWT, requireAdmin, async (req, res) => {
   }
 });
 
-router.get("/defaults", verifyJWT, (_req, res) => {
+router.get("/defaults", verifyJWT, requirePermission("supervision.view"), (_req, res) => {
   res.json(getSupervisionAlertRulesPayload(buildDefaultSupervisionAlertRules()));
 });
 

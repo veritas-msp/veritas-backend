@@ -1,5 +1,6 @@
 import express from "express";
 import verifyJWT from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/permissions.js";
 import {
   createAgentVaultSecret,
   listAgentVaultSecrets,
@@ -18,7 +19,7 @@ function requireAgent(req, res, next) {
 
 router.use(verifyJWT, requireAgent);
 
-router.get("/", async (req, res) => {
+router.get("/", requirePermission("vault.view"), async (req, res) => {
   try {
     const contactId = Number(req.query.contactId);
     if (!contactId) return res.status(400).json({ error: "contactId requis." });
@@ -30,7 +31,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/", requirePermission("vault.manage"), async (req, res) => {
   try {
     const clientId = Number(req.body?.clientId);
     const contactId = Number(req.body?.contactId);
@@ -56,7 +57,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-router.post("/:id/revoke", async (req, res) => {
+router.post("/:id/revoke", requirePermission("vault.manage"), async (req, res) => {
   try {
     const secret = await revokeAgentVaultSecret(req.params.id, req.user);
     res.json(secret);

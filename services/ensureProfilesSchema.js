@@ -28,7 +28,7 @@ async function tableExists(client, table) {
   return Boolean(rows[0]?.reg);
 }
 
-/** Colonne parent_profile + profils par défaut si la table est vide. */
+/** parent_profile column + default profiles if the table is empty. */
 export async function ensureProfilesSchema() {
   if (ensured) return;
   if (!(await canRunAutoSchemaMigrations())) return;
@@ -44,22 +44,20 @@ export async function ensureProfilesSchema() {
       if (fs.existsSync(filePath)) {
         const userResult = await client.query("SELECT current_user");
         const dbUser = userResult.rows[0]?.current_user || "postgres";
-        console.log("[profiles] Application de la migration héritage profils…");
         await client.query(adaptMigrationSql(fs.readFileSync(filePath, "utf8"), dbUser));
       } else {
-        console.warn("[profiles] Migration introuvable:", INHERITANCE_MIGRATION);
+        console.warn("[profiles] Migration not found:", INHERITANCE_MIGRATION);
       }
     }
 
     const countResult = await client.query("SELECT COUNT(*)::int AS count FROM v_b_users_profiles");
     if ((countResult.rows[0]?.count || 0) === 0) {
-      console.log("[profiles] Table vide — insertion des profils par défaut…");
       await client.query(REFERENCE_SCHEMA_SEEDS_SQL);
     }
 
     ensured = true;
   } catch (err) {
-    console.error("[profiles] Échec migration automatique:", err.message);
+    console.error("[profiles] Automatic migration failed:", err.message);
   } finally {
     client.release();
   }

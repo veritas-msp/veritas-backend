@@ -9,6 +9,8 @@ import {
   profileHasChildren,
 } from "../../services/profilePermissions.js";
 import { ensureProfilesSchema } from "../../services/ensureProfilesSchema.js";
+import { syncPermissionsFromModuleFlag } from "../../services/permissionService.js";
+import { MODULE_FLAG_TO_GROUPS } from "../../config/permissionCatalog.js";
 
 const router = express.Router();
 
@@ -36,7 +38,7 @@ function mapProfileRow(row) {
 }
 
 // ───────────────────────────────────────────────
-// ✅ GET /api/profiles/:name — Accès effectifs d'un profil
+// ✅ GET /api/profiles/:name — Effective access for a profile
 // ───────────────────────────────────────────────
 router.get("/:name", async (req, res) => {
   const { name } = req.params;
@@ -78,7 +80,7 @@ router.get("/:name", async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// ✏️ PATCH /profiles/:name — Modifier les accès d'un profil
+// ✏️ PATCH /profiles/:name — Update profile access
 // ───────────────────────────────────────────────
 router.patch("/:name", requireRole("admin"), async (req, res) => {
   const { name } = req.params;
@@ -164,6 +166,23 @@ router.patch("/:name", requireRole("admin"), async (req, res) => {
       return res.status(404).json({ error: "Profil non trouvé" });
     }
 
+    // Sync permission catalog when module flags change
+    const flagPayload = {
+      monitoring_enabled,
+      infrastructure_enabled,
+      cybersecurite_enabled,
+      planning_enabled,
+      service_enabled,
+      tickets_enabled,
+      configurateur_enabled,
+      dashboard_enabled,
+      documents_enabled,
+    };
+    for (const [flagKey, value] of Object.entries(flagPayload)) {
+      if (value === undefined || !MODULE_FLAG_TO_GROUPS[flagKey]) continue;
+      await syncPermissionsFromModuleFlag(name, flagKey, Boolean(value));
+    }
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Erreur SQL" });
@@ -171,7 +190,7 @@ router.patch("/:name", requireRole("admin"), async (req, res) => {
 });
 
 // ────────────────────────────────────────────────
-// ➕ POST /profiles — Création d'un profil (option héritage)
+// ➕ POST /api/profiles — Create a profile
 // ────────────────────────────────────────────────
 router.post("/", requireRole("admin"), async (req, res) => {
   if (isCommunity()) {
@@ -261,7 +280,7 @@ router.post("/", requireRole("admin"), async (req, res) => {
 });
 
 // ────────────────────────────────────────────────
-// 🗑 DELETE /profiles/:name — Suppression d'un profil
+// 🗑 DELETE /profiles/:name — Delete a profile
 // ────────────────────────────────────────────────
 router.delete("/:name", requireRole("admin"), async (req, res) => {
   const { name } = req.params;
@@ -303,7 +322,7 @@ router.delete("/:name", requireRole("admin"), async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /api/profiles — Tous les profils
+// 📥 GET /api/profiles — All profiles
 // ───────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {

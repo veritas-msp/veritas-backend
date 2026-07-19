@@ -1,9 +1,10 @@
 // ───────────────────────────────────────────────
-// 📅 Routes pour la gestion des événements du planning
+// 📅 Planning event routes
 // ───────────────────────────────────────────────
 import express from 'express';
 import { pool } from '../../database/db.js';
 import verifyJWT from '../../middleware/auth.js';
+import { requirePermission } from '../../middleware/permissions.js';
 import { body, validationResult } from 'express-validator';
 import {
   normalizePlanningEventDateInput,
@@ -73,9 +74,9 @@ function buildEventsListSql(schema, { whereSql, orderSql, limitSql }) {
 }
 
 // ───────────────────────────────────────────────
-// 📋 GET /api/events — Récupérer tous les événements
+// 📋 GET /api/events — Fetch all events
 // ───────────────────────────────────────────────
-router.get('/', verifyJWT, async (req, res) => {
+router.get('/', verifyJWT, requirePermission('planning.view'), async (req, res) => {
   try {
     const schema = await ensureEventsSchema();
     const { clientId, upcoming, recent, limit } = req.query;
@@ -128,17 +129,18 @@ router.get('/', verifyJWT, async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
-    console.error('Erreur lors de la récupération des événements:', err);
+    console.error('Error fetching events:', err);
     res.status(500).json({ error: 'Erreur lors de la récupération des événements' });
   }
 });
 
 // ───────────────────────────────────────────────
-// ➕ POST /api/events — Créer un événement
+// ➕ POST /api/events — Create an event
 // ───────────────────────────────────────────────
 router.post(
   '/',
   verifyJWT,
+  requirePermission('planning.edit'),
   [
     body('title').notEmpty().withMessage('Le titre est requis'),
     body('type').isIn(['intervention', 'presentation', 'maintenance', 'maintenance_preventive', 'mise_a_jour', 'integration_monitoring', 'conge', 'other']).withMessage('Type d\'événement invalide'),
@@ -147,7 +149,7 @@ router.post(
     body('clientId').optional({ nullable: true, checkFalsy: true }).isInt().withMessage('clientId doit être un entier'),
     body('equipmentId').optional({ nullable: true, checkFalsy: true }).custom((value) => {
       if (value === null || value === undefined || value === '') return true;
-      // Accepter les entiers, strings (IDs générés), UUID (services), ou format "Type-Nom-Index" (cybersécurité)
+      // equipmentId may be an integer or string
       return Number.isInteger(Number(value)) || typeof value === 'string';
     }).withMessage('equipmentId doit être un entier ou une chaîne de caractères'),
     body('assignedUserId').optional({ nullable: true, checkFalsy: true }).isUUID().withMessage('assignedUserId doit être un UUID valide'),
@@ -233,7 +235,7 @@ router.post(
 
       res.status(201).json(formatEventRowForApi(result.rows[0]));
     } catch (err) {
-      console.error('Erreur lors de la création de l\'événement:', err);
+      console.error('Error creating de l\'événement:', err);
       if (err?.code === '23505') {
         return res.status(409).json({ error: 'Un rappel existe déjà pour ce ticket' });
       }
@@ -243,11 +245,12 @@ router.post(
 );
 
 // ───────────────────────────────────────────────
-// ✏️ PUT /api/events/:id — Mettre à jour un événement
+// ✏️ PUT /api/events/:id — Update an event
 // ───────────────────────────────────────────────
 router.put(
   '/:id',
   verifyJWT,
+  requirePermission('planning.edit'),
   [
     body('title').optional().notEmpty().withMessage('Le titre ne peut pas être vide'),
     body('type').optional().isIn(['intervention', 'presentation', 'maintenance', 'maintenance_preventive', 'mise_a_jour', 'integration_monitoring', 'conge', 'other']).withMessage('Type d\'événement invalide'),
@@ -256,7 +259,7 @@ router.put(
     body('clientId').optional({ nullable: true, checkFalsy: true }).isInt().withMessage('clientId doit être un entier'),
     body('equipmentId').optional({ nullable: true, checkFalsy: true }).custom((value) => {
       if (value === null || value === undefined || value === '') return true;
-      // Accepter les entiers, strings (IDs générés), UUID (services), ou format "Type-Nom-Index" (cybersécurité)
+      // equipmentId may be an integer or string
       return Number.isInteger(Number(value)) || typeof value === 'string';
     }).withMessage('equipmentId doit être un entier ou une chaîne de caractères'),
     body('assignedUserId').optional({ nullable: true, checkFalsy: true }).isUUID().withMessage('assignedUserId doit être un UUID valide'),
@@ -273,7 +276,7 @@ router.put(
       const { id } = req.params;
       const { title, type, start, end, description, clientId, equipmentId, assignedUserId, ticketId } = req.body;
 
-      // Vérifier que l'événement existe et appartient à l'utilisateur
+      // Verify the event exists
       const existingEvent = await pool.query(
         'SELECT * FROM v_b_events WHERE id = $1',
         [id]
@@ -283,7 +286,7 @@ router.put(
         return res.status(404).json({ error: 'Événement non trouvé' });
       }
 
-      // Vérifier que la date de fin est après la date de début si les deux sont fournies
+      // Normalize start/end dates for comparison
       const nextStart =
         start !== undefined
           ? normalizePlanningEventDateInput(start)
@@ -304,7 +307,7 @@ router.put(
       }
 
 
-      // Construire la requête de mise à jour dynamiquement
+      // Build UPDATE clause dynamically
       const updates = [];
       const values = [];
       let paramIndex = 1;
@@ -377,20 +380,20 @@ router.put(
 
       res.json(formatEventRowForApi(result.rows[0]));
     } catch (err) {
-      console.error('Erreur lors de la mise à jour de l\'événement:', err);
+      console.error('Error mise à jour de l\'événement:', err);
       res.status(500).json({ error: 'Erreur lors de la mise à jour de l\'événement' });
     }
   }
 );
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /api/events/:id — Supprimer un événement
+// 🗑️ DELETE /api/events/:id — Delete an event
 // ───────────────────────────────────────────────
-router.delete('/:id', verifyJWT, async (req, res) => {
+router.delete('/:id', verifyJWT, requirePermission('planning.edit'), async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Vérifier que l'événement existe
+    // Verify the event exists
     const existingEvent = await pool.query(
       'SELECT * FROM v_b_events WHERE id = $1',
       [id]
@@ -404,7 +407,7 @@ router.delete('/:id', verifyJWT, async (req, res) => {
 
     res.json({ success: true, message: 'Événement supprimé avec succès' });
   } catch (err) {
-    console.error('Erreur lors de la suppression de l\'événement:', err);
+    console.error('Error deleting de l\'événement:', err);
     res.status(500).json({ error: 'Erreur lors de la suppression de l\'événement' });
   }
 });

@@ -45,7 +45,7 @@ async function indexExists(client, table, indexName) {
   return rows.length > 0;
 }
 
-/** Plan des patches SQL manquants après installation du schéma de référence. */
+/** Plan of missing SQL patches after reference schema install. */
 export async function buildIncrementalAvrilMigrationPlan(client = pool) {
   const plan = [];
 
@@ -102,6 +102,36 @@ export async function buildIncrementalAvrilMigrationPlan(client = pool) {
   }
   if (!(await tableExists(client, "v_b_equipment_monitoring_alerts"))) {
     plan.push("20260630_equipment_monitoring_alerts.sql");
+  } else if (
+    !(await indexExists(
+      client,
+      "v_b_equipment_monitoring_alerts",
+      "v_b_equipment_monitoring_alerts_client_id_equipment_id_equipment_family_uniq"
+    )) &&
+    !(await indexExists(client, "v_b_equipment_monitoring_alerts", "uq_equipment_monitoring_alerts_item"))
+  ) {
+    plan.push("20260719_equipment_monitoring_alerts_unique.sql");
+  }
+  if (
+    (await tableExists(client, "v_b_tech_news_feeds")) &&
+    !(await indexExists(client, "v_b_tech_news_feeds", "v_b_tech_news_feeds_locale_feed_key_uniq"))
+  ) {
+    plan.push("20260719_tech_news_feeds_unique.sql");
+  }
+  if (
+    (await tableExists(client, "v_b_clients")) &&
+    !(await columnExists(client, "v_b_clients", "monitoring_alerts_suspension_type"))
+  ) {
+    plan.push("20260719_client_monitoring_alerts_suspension.sql");
+  }
+  if (!(await tableExists(client, "v_b_ai_usage"))) {
+    plan.push("20260719_ai_usage.sql");
+  }
+  if (
+    (await tableExists(client, "v_b_tickets")) &&
+    !(await columnExists(client, "v_b_tickets", "ai_runbook"))
+  ) {
+    plan.push("20260719_ticket_ai_runbook.sql");
   }
   if (!(await tableExists(client, "v_b_rmm_client_settings"))) {
     plan.push("20260701_rmm_client_settings.sql");
@@ -275,13 +305,11 @@ async function runMigrationFile(client, file, dbUser) {
     return false;
   }
   const sql = adaptMigrationSql(fs.readFileSync(filePath, "utf8"), dbUser);
-  console.log(`[incremental] Applying ${file}…`);
   await client.query(sql);
-  console.log(`[incremental] OK ${file}`);
   return true;
 }
 
-/** Applique les patches schema/patches post-installation (RMM, tags, formulaires, etc.). */
+/** Apply post-install schema/patches (RMM, tags, forms, etc.). */
 export async function runIncrementalAvrilMigrations() {
   const client = await pool.connect();
   try {
@@ -304,8 +332,6 @@ export async function runIncrementalAvrilMigrations() {
     const missing = await verifyIncrementalTables(client);
     if (missing.length > 0) {
       console.warn("[incremental] Tables still missing:", missing.join(", "));
-    } else {
-      console.log("[incremental] Incremental schema complete.");
     }
 
     return { executed, missing };

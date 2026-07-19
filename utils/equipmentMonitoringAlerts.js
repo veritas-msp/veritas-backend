@@ -28,7 +28,7 @@ export function isAlertableMonitorStatus(status) {
   return ALERTABLE_STATUSES.has(String(status || "").toLowerCase());
 }
 
-/** Alertes actives uniquement si activées explicitement et non suspendues. */
+/** Alerts are active only when explicitly enabled and not suspended. */
 export function areMonitoringAlertsEnabled(settings) {
   if (!settings?.alertsEnabled) return false;
   if (isAlertSuspensionActive(settings)) return false;
@@ -50,6 +50,10 @@ function mapAlertRow(row) {
     suspensionReason: row.suspension_reason,
     alertsEnabled: Boolean(row.alerts_enabled),
     lastKnownStatus: row.last_known_status,
+    lastKnownCriteria:
+      row.last_known_criteria && typeof row.last_known_criteria === "object"
+        ? row.last_known_criteria
+        : {},
     lastTicketId: row.last_ticket_id,
     lastAlertAt: row.last_alert_at,
     createdAt: row.created_at,
@@ -174,29 +178,60 @@ export async function touchEquipmentAlertState({
   equipmentFamily,
   equipmentName,
   monitorStatus,
+  lastKnownCriteria = null,
   ticketId = null,
   alertAt = null,
 }) {
-  const result = await pool.query(
-    `INSERT INTO v_b_equipment_monitoring_alerts
-       (client_id, equipment_id, equipment_family, equipment_name, last_known_status, last_ticket_id, last_alert_at, updated_at)
-     VALUES ($1, $2::uuid, $3, $4, $5, $6::uuid, $7, NOW())
-     ON CONFLICT (client_id, equipment_id, equipment_family) DO UPDATE SET
-       equipment_name = COALESCE(EXCLUDED.equipment_name, v_b_equipment_monitoring_alerts.equipment_name),
-       last_known_status = EXCLUDED.last_known_status,
-       last_ticket_id = COALESCE(EXCLUDED.last_ticket_id, v_b_equipment_monitoring_alerts.last_ticket_id),
-       last_alert_at = COALESCE(EXCLUDED.last_alert_at, v_b_equipment_monitoring_alerts.last_alert_at),
-       updated_at = NOW()
-     RETURNING *`,
-    [
-      clientId,
-      equipmentId,
-      equipmentFamily,
-      equipmentName || null,
-      monitorStatus || "ok",
-      ticketId,
-      alertAt,
-    ]
-  );
+  const criteriaJson =
+    lastKnownCriteria && typeof lastKnownCriteria === "object"
+      ? JSON.stringify(lastKnownCriteria)
+      : null;
+
+  const result = criteriaJson
+    ? await pool.query(
+        `INSERT INTO v_b_equipment_monitoring_alerts
+           (client_id, equipment_id, equipment_family, equipment_name, last_known_status,
+            last_known_criteria, last_ticket_id, last_alert_at, updated_at)
+         VALUES ($1, $2::uuid, $3, $4, $5, $6::jsonb, $7::uuid, $8, NOW())
+         ON CONFLICT (client_id, equipment_id, equipment_family) DO UPDATE SET
+           equipment_name = COALESCE(EXCLUDED.equipment_name, v_b_equipment_monitoring_alerts.equipment_name),
+           last_known_status = EXCLUDED.last_known_status,
+           last_known_criteria = EXCLUDED.last_known_criteria,
+           last_ticket_id = COALESCE(EXCLUDED.last_ticket_id, v_b_equipment_monitoring_alerts.last_ticket_id),
+           last_alert_at = COALESCE(EXCLUDED.last_alert_at, v_b_equipment_monitoring_alerts.last_alert_at),
+           updated_at = NOW()
+         RETURNING *`,
+        [
+          clientId,
+          equipmentId,
+          equipmentFamily,
+          equipmentName || null,
+          monitorStatus || "ok",
+          criteriaJson,
+          ticketId,
+          alertAt,
+        ]
+      )
+    : await pool.query(
+        `INSERT INTO v_b_equipment_monitoring_alerts
+           (client_id, equipment_id, equipment_family, equipment_name, last_known_status, last_ticket_id, last_alert_at, updated_at)
+         VALUES ($1, $2::uuid, $3, $4, $5, $6::uuid, $7, NOW())
+         ON CONFLICT (client_id, equipment_id, equipment_family) DO UPDATE SET
+           equipment_name = COALESCE(EXCLUDED.equipment_name, v_b_equipment_monitoring_alerts.equipment_name),
+           last_known_status = EXCLUDED.last_known_status,
+           last_ticket_id = COALESCE(EXCLUDED.last_ticket_id, v_b_equipment_monitoring_alerts.last_ticket_id),
+           last_alert_at = COALESCE(EXCLUDED.last_alert_at, v_b_equipment_monitoring_alerts.last_alert_at),
+           updated_at = NOW()
+         RETURNING *`,
+        [
+          clientId,
+          equipmentId,
+          equipmentFamily,
+          equipmentName || null,
+          monitorStatus || "ok",
+          ticketId,
+          alertAt,
+        ]
+      );
   return mapAlertRow(result.rows[0]);
 }

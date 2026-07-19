@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────
-// 🛡️ Middleware de contrôle par rôle
+// 🛡️ Role-based access middleware
 // ─────────────────────────────────────────────
 
 export function requireRole(allowedRoles) {
-  // Autorise : string unique OU tableau de rôles
+  // Allows: a single string OR an array of roles
   const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
 
   return (req, res, next) => {

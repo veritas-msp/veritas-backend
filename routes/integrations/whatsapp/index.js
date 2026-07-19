@@ -5,10 +5,10 @@ import testRouter from "./test.js";
 
 const router = express.Router();
 
-// Webhook Meta (public, sans JWT)
+// Webhook Meta (public, without JWT)
 router.use("/webhook", webhookRouter);
 
-// Test de connexion (authentifié)
+// Connection test (authenticated)
 router.use("/", verifyJWT, testRouter);
 
 export default router;

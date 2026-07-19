@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📦 Imports principaux
+// 📦 Main imports
 // ───────────────────────────────────────────────
 import express from 'express';
 import { pool } from '../../database/db.js';
@@ -28,6 +28,7 @@ import {
 } from '../../utils/equipmentFamilies.js';
 import { isCommunity } from '../../utils/edition.js';
 import { requireProForClientInfra } from '../../middleware/clientInfraRoutes.js';
+import { requirePermission, requireAnyPermission } from '../../middleware/permissions.js';
 import {
   attachEquipmentCounts,
   fetchEquipmentCountsByClientId,
@@ -70,7 +71,7 @@ async function fetchTagsByClientId() {
     }
   } catch (err) {
     if (err.code === "42P01") {
-      console.warn("[client-tags] tables absentes, étiquettes ignorées");
+      console.warn("[client-tags] tables missing, tags skipped");
       return byClientId;
     }
     throw err;
@@ -138,7 +139,7 @@ async function fetchPrimaryContactsByClientId() {
     }
   } catch (err) {
     if (err.code === "42P01") {
-      console.warn("[client-contacts] table absente, contacts ignorés");
+      console.warn("[client-contacts] table missing, contacts skipped");
       return byClientId;
     }
     throw err;
@@ -171,7 +172,7 @@ const enrichClientsListPayload = async (clients) => {
 };
 const invalidateClientsListCache = () => {};
 
-// Mapping des tables de modules (hors flags génériques, désormais stockés dans v_b_clients.modules)
+// Module table mapping (excluding generic flags, now stored in v_b_clients.modules)
 const MODULE_TABLES = {
   internet: "v_b_clients_m_internet",
   servers: "v_b_clients_m_servers",
@@ -320,7 +321,7 @@ function mapLicenceRow(row) {
   };
 }
 
-/** Tables cybersécurité uniquement (page Cyber — sans N× fetch /modules) */
+/** Cybersecurity tables only (Cyber page — avoids N× /modules fetches) */
 const CYBER_MODULE_TABLES = {
   antivirus: "v_b_clients_m_antivirus",
   antispam: "v_b_clients_m_antispam",
@@ -640,7 +641,7 @@ function mapClientsListRow(row) {
 
 async function logClientUpdate({ req, updateFields, valueMap }) {
   try {
-    // Déterminer si l'id est un UUID ou un ID numérique
+    // Determine whether id is a UUID or numeric ID
     let clientId = req.params.id;
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -688,14 +689,14 @@ async function logClientUpdate({ req, updateFields, valueMap }) {
       ]
     );
   } catch (logError) {
-    console.warn('Erreur lors de l\'enregistrement du log:', logError);
+    console.warn('Error writing log:', logError);
   }
 }
 
 // ───────────────────────────────────────────────
-// 📥 GET / — Liste des clients (monitoring)
+// 📥 GET / — List clients (monitoring)
 // ───────────────────────────────────────────────
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('clients.view'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT c.*, u.username, u.email as user_email
@@ -703,7 +704,7 @@ router.get('/', async (req, res) => {
       LEFT JOIN v_b_users u ON c.commercial_id::text = u.id::text
     `);
 
-    // Transformer les données pour inclure le nom commercial
+    // Attach commercial name from join data
     const clientsWithCommercial = result.rows.map(client => ({
       ...client,
       commercial: client.username || client.user_email || null
@@ -716,9 +717,9 @@ router.get('/', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /list — Liste clients ultra légère (EnterprisePage)
 // ───────────────────────────────────────────────
-router.get('/list', async (req, res) => {
+// ───────────────────────────────────────────────
+router.get('/list', requirePermission('clients.view'), async (req, res) => {
   try {
     const result = await queryClientsListBaseRows();
     const payload = result.rows.map(mapClientsListRow);
@@ -732,7 +733,7 @@ router.get('/list', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /equipment-counts — Comptage matériel brut (COUNT(*) par table m_*)
+// 📥 GET /equipment-counts — Raw equipment counts (COUNT(*) per m_* table)
 // ───────────────────────────────────────────────
 router.get("/equipment-counts", async (req, res) => {
   try {
@@ -747,8 +748,8 @@ router.get("/equipment-counts", async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /cyber-page-data — Page Cybersécurité : campagnes + antivirus / antispam / sauvegarde (vues m_*)
-// Sans N appels GET /:id/modules ni enrichissement modules_monitoring inutile.
+// 📥 GET /cyber-page-data — Cybersecurity page: campaigns + antivirus / antispam / backup (m_* views)
+// Avoids N GET /:id/modules calls and unnecessary modules_monitoring enrichment.
 // ───────────────────────────────────────────────
 router.get("/cyber-page-data", verifyJWT, async (req, res) => {
   try {
@@ -911,7 +912,7 @@ router.get("/cyber-page-data", verifyJWT, async (req, res) => {
       campaigns: campaignsResult.rows || [],
     });
   } catch (err) {
-    console.error("Erreur GET /cyber-page-data:", err);
+    console.error("GET /cyber-page-data:", err);
     res.status(500).json({
       error: "Erreur lors du chargement des données cybersécurité",
       details: err.message,
@@ -921,9 +922,9 @@ router.get("/cyber-page-data", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /general — Liste des clients généraux (avec modules depuis nouvelles tables)
 // ───────────────────────────────────────────────
-router.get('/general', async (req, res) => {
+// ───────────────────────────────────────────────
+router.get('/general', requirePermission('clients.view'), async (req, res) => {
   try {
     const clientsResult = await pool.query(`
       SELECT c.*, u.username, u.email as user_email
@@ -1086,14 +1087,14 @@ router.get('/general', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📦 GET /:id/modules — Récupérer modules/équipements éclatés (nouvelles tables)
+// ───────────────────────────────────────────────
 // ───────────────────────────────────────────────
 router.get('/:id/modules', async (req, res) => {
   const { id } = req.params;
   try {
     const payload = {};
     
-    // Récupérer TOUS les équipements directement depuis les tables SQL
+    // Fetch all equipment directly from SQL tables
     for (const [family, table] of Object.entries(MODULE_TABLES)) {
       try {
         let result;
@@ -1129,7 +1130,7 @@ router.get('/:id/modules', async (req, res) => {
           } else throw colErr;
         }
         
-        // Parser data si c'est une string
+        // Parse data when it is a string
         const parsedRows = result.rows.map(row => {
           let parsedData = row.data;
           if (row.data && typeof row.data === 'string') {
@@ -1171,10 +1172,10 @@ router.get('/:id/modules', async (req, res) => {
         payload[family] = parsedRows;
       } catch (err) {
         if (err.code === '42P01') {
-          // Table n'existe pas
+          // Table does not exist
           payload[family] = [];
         } else {
-          console.error(`Erreur pour ${family}:`, err);
+          console.error(`Error pour ${family}:`, err);
           payload[family] = [];
         }
       }
@@ -1192,7 +1193,7 @@ router.get('/:id/modules', async (req, res) => {
       azureHasCredentials = false;
     }
 
-    // Transformer avec la fonction standard
+    // Transform with standard helper
     const transformed = transformClientModulesToFrontend(payload, { 
       azureHasCredentials 
     });
@@ -1204,13 +1205,13 @@ router.get('/:id/modules', async (req, res) => {
       azureHasCredentials
     });
   } catch (err) {
-    console.error('Erreur /:id/modules:', err);
+    console.error('Error /:id/modules:', err);
     res.status(500).json({ error: "Erreur lors du chargement des modules", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /general/:id — Récupération d'un client par ID
+// 📥 GET /general/:id — Fetch a client by ID
 // ───────────────────────────────────────────────
 router.get('/general/:id', async (req, res) => {
   try {
@@ -1264,7 +1265,7 @@ router.get('/general/:id', async (req, res) => {
       client.ssids = [];
     }
 
-    // Définir le nom commercial depuis les données de jointure
+    // Set commercial name from join data
     client.commercial = client.username || client.user_email || null;
 
     res.json(client);
@@ -1274,7 +1275,7 @@ router.get('/general/:id', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📝 POST /:id/logs — Créer un log manuel pour un client
+// 📝 POST /:id/logs — Create a manual log for a client
 // ───────────────────────────────────────────────
 router.post('/:id/logs', verifyJWT, async (req, res) => {
   try {
@@ -1285,13 +1286,13 @@ router.post('/:id/logs', verifyJWT, async (req, res) => {
       return res.status(400).json({ error: 'Le champ action est requis' });
     }
 
-    // Déterminer si l'id est un UUID ou un ID numérique
-    // Si c'est un UUID, récupérer l'ID numérique du client
+    // When id is a UUID, resolve numeric client ID
+    // Legacy route comment: GET / — client list (monitoring)
     let clientId = id;
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     if (uuidRegex.test(id)) {
-      // C'est un UUID, récupérer l'ID numérique
+      // Attach commercial name from join data
       const clientResult = await pool.query(
         'SELECT id FROM v_b_clients WHERE id::text = $1',
         [id]
@@ -1303,18 +1304,18 @@ router.post('/:id/logs', verifyJWT, async (req, res) => {
       console.log(`🔄 POST logs: Conversion UUID ${id} → ID numérique ${clientId}`);
     }
 
-    // Vérifier que clientId est bien un nombre
+    // Ensure clientId is numeric
     if (isNaN(parseInt(clientId))) {
       console.error(`❌ POST logs: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
       return res.status(400).json({ error: 'ID client invalide' });
     }
 
-    // Récupérer l'utilisateur connecté (ID numérique seulement)
+    // 📥 GET /list — Lightweight client list (EnterprisePage)
     const rawUserId = req.user?.id || req.user?.user_id || null;
     const uuidRegexUser = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     const userId = rawUserId && uuidRegexUser.test(String(rawUserId)) ? String(rawUserId) : null;
 
-    // Insérer le log
+    // Legacy route comment: GET /equipment-counts
     await pool.query(
       `INSERT INTO v_b_clients_logs
        (client_id, user_id, action, details)
@@ -1329,13 +1330,13 @@ router.post('/:id/logs', verifyJWT, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    console.error('❌ Erreur lors de la création du log:', error);
+    console.error('Error creating log:', error);
     res.status(500).json({ error: 'Erreur lors de la création du log' });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /:id/logs — Récupération des logs d'un client
+// 📥 GET /:id/logs — Fetch logs for a client
 // ───────────────────────────────────────────────
 router.get('/:id/logs', async (req, res) => {
   try {
@@ -1344,12 +1345,12 @@ router.get('/:id/logs', async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    // Déterminer si l'id est un UUID ou un ID numérique
+    // Resolve numeric client ID when a UUID is provided
     let clientId = id;
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     if (uuidRegex.test(id)) {
-      // C'est un UUID, récupérer l'ID numérique
+      // Look up numeric ID from UUID
       const clientResult = await pool.query(
         'SELECT id FROM v_b_clients WHERE id::text = $1',
         [id]
@@ -1361,7 +1362,7 @@ router.get('/:id/logs', async (req, res) => {
       console.log(`🔄 GET logs: Conversion UUID ${id} → ID numérique ${clientId}`);
     }
 
-    // Vérifier que clientId est bien un nombre pour les logs
+    // Ensure clientId is numeric for logs
     if (isNaN(parseInt(clientId))) {
       console.error(`❌ GET logs: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
       return res.status(400).json({ error: 'ID client invalide' });
@@ -1401,24 +1402,24 @@ router.get('/:id/logs', async (req, res) => {
       totalPages: Math.ceil(total / limit)
     });
   } catch (err) {
-    console.error('Erreur lors de la récupération des logs du client:', err);
+    console.error('Error fetching client logs:', err);
     res.status(500).json({ error: "Erreur lors de la récupération des logs", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🛡️ GET /:id/antivirus — Récupération des données antivirus d'un client
+// 🛡️ GET /:id/antivirus — Fetch antivirus data for a client
 // ───────────────────────────────────────────────
 router.get('/:id/antivirus', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Déterminer si l'id est un UUID ou un ID numérique
+    // Legacy route comment: GET /:id/modules
     let clientId = id;
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     if (uuidRegex.test(id)) {
-      // C'est un UUID, récupérer l'ID numérique
+      // Fetch all equipment directly from SQL tables
       const clientResult = await pool.query(
         'SELECT id FROM v_b_clients WHERE id::text = $1',
         [id]
@@ -1430,13 +1431,13 @@ router.get('/:id/antivirus', async (req, res) => {
       console.log(`🔄 GET antivirus: Conversion UUID ${id} → ID numérique ${clientId}`);
     }
 
-    // Vérifier que clientId est bien un nombre
+    // Ensure clientId is numeric
     if (isNaN(parseInt(clientId))) {
       console.error(`❌ GET antivirus: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
       return res.status(400).json({ error: 'ID client invalide' });
     }
 
-    // Récupérer les données antivirus du client
+    // Fetch client antivirus data
     const result = await pool.query(
       `SELECT id, client_id, item_key, data, created_at, updated_at
        FROM v_b_clients_m_antivirus
@@ -1445,7 +1446,7 @@ router.get('/:id/antivirus', async (req, res) => {
       [clientId]
     );
 
-    // Transformer les données JSON de la colonne 'data' selon la vraie structure
+    // Transform JSON data column according to actual structure
     const antivirusData = result.rows.map(row => {
       const data = row.data || {};
 
@@ -1453,7 +1454,7 @@ router.get('/:id/antivirus', async (req, res) => {
         id: row.id,
         client_id: row.client_id,
         item_key: row.item_key,
-        // Mapping selon la vraie structure JSON de v_b_clients_m_antivirus
+        // Mapping based on v_b_clients_m_antivirus JSON structure
         nom: data.solution || data.nom || data.name || 'N/A',
         solution: data.solution || data.nom || data.name || 'N/A',
         utilisateurs: data.licencesUtilisees || data.syncData?.license?.usedLicenses || 'N/A',
@@ -1462,7 +1463,7 @@ router.get('/:id/antivirus', async (req, res) => {
         nombre_licences: data.licencesTotales || data.syncData?.license?.totalLicenses || 'N/A',
         expiration: data.expiration || data.syncData?.license?.expirationDate || null,
         expirityDate: data.expiration || data.syncData?.license?.expirationDate || null,
-        // Informations supplémentaires disponibles
+        // Transform with standard helper
         endpointsTotal: data.endpoints?.total || data.syncData?.endpoints?.total || 'N/A',
         endpointsManaged: data.endpoints?.managed || data.syncData?.endpoints?.managed || 'N/A',
         companyName: data.companyName || data.syncData?.company?.name || 'N/A',
@@ -1476,7 +1477,7 @@ router.get('/:id/antivirus', async (req, res) => {
 
     res.json(antivirusData);
   } catch (err) {
-    console.error('Erreur lors de la récupération des données antivirus du client:', err);
+    console.error('Error fetching client antivirus data:', err);
     res.status(500).json({
       error: "Erreur lors de la récupération des données antivirus",
       details: err.message,
@@ -1486,19 +1487,19 @@ router.get('/:id/antivirus', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// ☁️ GET /:id/o365 — Récupération des données Microsoft 365 d'un client
-//    (snapshots enregistrés dans v_b_clients_m_o365)
+// ☁️ GET /:id/o365 — Fetch Microsoft 365 data for a client
+// ───────────────────────────────────────────────
 // ───────────────────────────────────────────────
 router.get('/:id/o365', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Déterminer si l'id est un UUID ou un ID numérique
+    // Legacy route comment: GET /general/:id
     let clientId = id;
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     if (uuidRegex.test(id)) {
-      // C'est un UUID, récupérer l'ID numérique
+      // Set commercial name from join data
       const clientResult = await pool.query(
         'SELECT id FROM v_b_clients WHERE id::text = $1',
         [id]
@@ -1510,13 +1511,13 @@ router.get('/:id/o365', async (req, res) => {
       console.log(`🔄 GET o365: Conversion UUID ${id} → ID numérique ${clientId}`);
     }
 
-    // Vérifier que clientId est bien un nombre
+    // Ensure clientId is numeric
     if (isNaN(parseInt(clientId))) {
       console.error(`❌ GET o365: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
       return res.status(400).json({ success: false, error: 'ID client invalide' });
     }
 
-    // Récupérer les snapshots Microsoft 365 pour ce client
+    // Fetch snapshots Microsoft 365 for this client
     const result = await pool.query(
       `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
        FROM v_b_clients_m_o365
@@ -1525,7 +1526,7 @@ router.get('/:id/o365', async (req, res) => {
       [clientId]
     );
 
-    // S'assurer que la colonne data est bien un objet JSON
+    // Ensure data column is a JSON object
     const rows = result.rows.map(row => {
       let parsedData = row.data;
       if (parsedData && typeof parsedData === 'string') {
@@ -1549,7 +1550,7 @@ router.get('/:id/o365', async (req, res) => {
       data: rows,
     });
   } catch (err) {
-    console.error('Erreur lors de la récupération des données Office 365 du client:', err);
+    console.error('Error fetching client Office 365 data:', err);
     return res.status(500).json({
       success: false,
       error: "Erreur lors de la récupération des données Office 365",
@@ -1560,18 +1561,18 @@ router.get('/:id/o365', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📧 GET /:id/antispam — Récupération des données antispam d'un client
+// 📧 GET /:id/antispam — Fetch antispam data for a client
 // ───────────────────────────────────────────────
 router.get('/:id/antispam', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Déterminer si l'id est un UUID ou un ID numérique
+    // Legacy route comment: POST /:id/logs
     let clientId = id;
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     if (uuidRegex.test(id)) {
-      // C'est un UUID, récupérer l'ID numérique
+      // Determine whether id is a UUID or numeric ID
       const clientResult = await pool.query(
         'SELECT id FROM v_b_clients WHERE id::text = $1',
         [id]
@@ -1583,13 +1584,13 @@ router.get('/:id/antispam', async (req, res) => {
       console.log(`🔄 GET antispam: Conversion UUID ${id} → ID numérique ${clientId}`);
     }
 
-    // Vérifier que clientId est bien un nombre
+    // Ensure clientId is numeric
     if (isNaN(parseInt(clientId))) {
       console.error(`❌ GET antispam: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
       return res.status(400).json({ error: 'ID client invalide' });
     }
 
-    // Récupérer les données antispam du client
+    // Fetch client antispam data
     const result = await pool.query(
       `SELECT id, client_id, item_key, data, created_at, updated_at
        FROM v_b_clients_m_antispam
@@ -1598,7 +1599,7 @@ router.get('/:id/antispam', async (req, res) => {
       [clientId]
     );
 
-    // Transformer les données JSON de la colonne 'data' selon la structure fournie
+    // Transform JSON data column according to provided structure
     const antispamData = result.rows.map(row => {
       const data = row.data || {};
 
@@ -1606,7 +1607,7 @@ router.get('/:id/antispam', async (req, res) => {
         id: row.id,
         client_id: row.client_id,
         item_key: row.item_key,
-        // Mapping selon la structure JSON (logiciel, expiration, domainesSurveilles, utilisateursProteges)
+        // Mapping based on JSON structure (logiciel, expiration, domainesSurveilles, usersProteges)
         nom: data.logiciel || data.nom || data.name || data.solution || 'N/A',
         solution: data.logiciel || data.nom || data.name || data.solution || 'N/A',
         utilisateurs: data.utilisateursProteges || data.utilisateurs || data.nombre_utilisateurs || 'N/A',
@@ -1622,7 +1623,7 @@ router.get('/:id/antispam', async (req, res) => {
 
     res.json(antispamData);
   } catch (err) {
-    console.error('Erreur lors de la récupération des données antispam du client:', err);
+    console.error('Error fetching client antispam data:', err);
     res.status(500).json({
       error: "Erreur lors de la récupération des données antispam",
       details: err.message,
@@ -1632,7 +1633,7 @@ router.get('/:id/antispam', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📧 GET /:id/antispam/:recordId — Récupération d'un enregistrement antispam complet (id, client_id, item_key, name, data)
+// 📧 GET /:id/antispam/:recordId — Fetch full antispam record (id, client_id, item_key, name, data)
 // ───────────────────────────────────────────────
 router.get('/:id/antispam/:recordId', async (req, res) => {
   try {
@@ -1676,7 +1677,7 @@ router.get('/:id/antispam/:recordId', async (req, res) => {
       is_active: row.is_active
     });
   } catch (err) {
-    console.error('Erreur lors de la récupération de l\'enregistrement antispam:', err);
+    console.error('Error fetching de l\'enregistrement antispam:', err);
     res.status(500).json({
       error: "Erreur lors de la récupération de l'enregistrement antispam",
       details: err.message,
@@ -1686,13 +1687,13 @@ router.get('/:id/antispam/:recordId', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🏷️ GET /domains/all — Récupération de tous les noms de domaine de tous les clients
+// 🏷️ GET /domains/all — Fetch all domain names for all clients
 // ───────────────────────────────────────────────
 router.get('/domains/all', async (req, res) => {
   try {
-    // Récupérer tous les domaines avec les informations du client
-    // client_id dans v_b_clients_m_ndd est un entier, v_b_clients.id peut être entier ou UUID
-    // On utilise une sous-requête avec gestion d'erreur pour les conversions de type
+    // Fetch all domains with client information
+    // client_id in v_b_clients_m_ndd is integer; v_b_clients.id may be integer or UUID
+    // Uses subquery with error handling for type conversions
     const result = await pool.query(
       `SELECT 
         ndd.id,
@@ -1713,7 +1714,7 @@ router.get('/domains/all', async (req, res) => {
        ORDER BY client_name, ndd.created_at DESC`
     );
 
-    // Transformer les données JSON de la colonne 'data' selon la vraie structure
+    // Transform JSON data column according to actual structure
     const domainsData = result.rows.map(row => {
       const data = row.data || {};
 
@@ -1722,12 +1723,12 @@ router.get('/domains/all', async (req, res) => {
         client_id: row.client_id,
         client_name: row.client_name || 'N/A',
         item_key: row.item_key,
-        is_active: row.is_active !== false, // S'assurer que is_active est un booléen
-        // Mapping selon la vraie structure JSON de v_b_clients_m_ndd
+        is_active: row.is_active !== false, // S'assurer that is_active is a boolean
+        // Mapping based on v_b_clients_m_ndd JSON structure
         nom: data.nom || data.name || row.item_key || 'N/A',
         registrar: data.registrar || 'N/A',
         expiration: data.expiration || null,
-        lastSync: row.updated_at || row.created_at || null, // Utiliser updated_at pour la dernière synchro
+        lastSync: row.updated_at || row.created_at || null, // Use updated_at as last sync time
         created_at: row.created_at,
         updated_at: row.updated_at
       };
@@ -1735,7 +1736,7 @@ router.get('/domains/all', async (req, res) => {
 
     res.json(domainsData);
   } catch (err) {
-    console.error('Erreur lors de la récupération de tous les noms de domaine:', err);
+    console.error('Error fetching all domain names:', err);
     res.status(500).json({
       error: "Erreur lors de la récupération de tous les noms de domaine",
       details: err.message,
@@ -1745,18 +1746,18 @@ router.get('/domains/all', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🏷️ GET /:id/domains — Récupération des noms de domaine d'un client
+// 🏷️ GET /:id/domains — Fetch domain names for a client
 // ───────────────────────────────────────────────
 router.get('/:id/domains', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Déterminer si l'id est un UUID ou un ID numérique
+    // When id is a UUID, resolve numeric client ID
     let clientId = id;
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     if (uuidRegex.test(id)) {
-      // C'est un UUID, récupérer l'ID numérique
+      // UUID provided — resolve numeric ID
       const clientResult = await pool.query(
         'SELECT id FROM v_b_clients WHERE id::text = $1',
         [id]
@@ -1768,16 +1769,16 @@ router.get('/:id/domains', async (req, res) => {
       console.log(`🔄 GET domains: Conversion UUID ${id} → ID numérique ${clientId}`);
     }
 
-    // Convertir en nombre si nécessaire
+    // Convert to number if needed
     clientId = parseInt(clientId);
 
-    // Vérifier que clientId est bien un nombre
+    // Ensure clientId is numeric
     if (isNaN(clientId)) {
       console.error(`❌ GET domains: clientId n'est pas un nombre: ${clientId} (type: ${typeof clientId})`);
       return res.status(400).json({ error: 'ID client invalide' });
     }
 
-    // Récupérer les données NDD du client
+    // Fetch client domain (NDD) data
     const result = await pool.query(
       `SELECT id, client_id, item_key, data, is_active, created_at, updated_at
        FROM v_b_clients_m_ndd
@@ -1786,7 +1787,7 @@ router.get('/:id/domains', async (req, res) => {
       [clientId]
     );
 
-    // Transformer les données JSON de la colonne 'data' selon la vraie structure
+    // Transform JSON data column according to actual structure
     const domainsData = result.rows.map(row => {
       const data = row.data || {};
 
@@ -1795,7 +1796,7 @@ router.get('/:id/domains', async (req, res) => {
         client_id: row.client_id,
         item_key: row.item_key,
         is_active: row.is_active,
-        // Mapping selon la vraie structure JSON de v_b_clients_m_ndd
+        // Mapping based on v_b_clients_m_ndd JSON structure
         nom: data.nom || data.name || 'N/A',
         registrar: data.registrar || 'N/A',
         expiration: data.expiration || null,
@@ -1807,7 +1808,7 @@ router.get('/:id/domains', async (req, res) => {
 
     res.json(domainsData);
   } catch (err) {
-    console.error('Erreur lors de la récupération des noms de domaine du client:', err);
+    console.error('Error fetching client domain names:', err);
     res.status(500).json({
       error: "Erreur lors de la récupération des noms de domaine",
       details: err.message,
@@ -1817,7 +1818,7 @@ router.get('/:id/domains', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔒 GET /ssl-certificates/all — Tous les certificats SSL du portefeuille
+// 🔒 GET /ssl-certificates/all — All SSL certificates in portfolio
 // ───────────────────────────────────────────────
 router.get('/ssl-certificates/all', async (req, res) => {
   try {
@@ -1853,7 +1854,7 @@ router.get('/ssl-certificates/all', async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
     }
-    console.error("Erreur GET ssl-certificates/all:", err);
+    console.error("Error GET ssl-certificates/all:", err);
     res.status(500).json({
       error: "Erreur lors de la récupération des certificats SSL",
       details: err.message,
@@ -1863,9 +1864,9 @@ router.get('/ssl-certificates/all', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔒 POST /ssl-certificates/check-all — Vérifier tous les certificats (TLS)
+// 🔒 POST /ssl-certificates/check-all — Check all certificates (TLS)
 // ───────────────────────────────────────────────
-router.post('/ssl-certificates/check-all', verifyJWT, async (req, res) => {
+router.post('/ssl-certificates/check-all', verifyJWT, requirePermission('services.edit'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, client_id, item_key, name, data, is_active, created_at, updated_at
@@ -1884,13 +1885,13 @@ router.post('/ssl-certificates/check-all', verifyJWT, async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
     }
-    console.error("Erreur POST ssl-certificates/check-all:", err);
+    console.error("Error POST ssl-certificates/check-all:", err);
     res.status(500).json({ error: "Erreur lors de la vérification SSL", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🔒 GET /:id/ssl-certificates — Certificats SSL/TLS d'un client
+// 🔒 GET /:id/ssl-certificates — SSL/TLS certificates for a client
 // ───────────────────────────────────────────────
 router.get('/:id/ssl-certificates', async (req, res) => {
   try {
@@ -1930,7 +1931,7 @@ router.get('/:id/ssl-certificates', async (req, res) => {
     if (err.code === "42P01") {
       return res.json([]);
     }
-    console.error("Erreur GET ssl-certificates:", err);
+    console.error("Error GET ssl-certificates:", err);
     res.status(500).json({
       error: "Erreur lors de la récupération des certificats SSL",
       details: err.message,
@@ -1939,9 +1940,9 @@ router.get('/:id/ssl-certificates', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔒 POST /:id/ssl-certificates — Ajouter un hôte à surveiller
 // ───────────────────────────────────────────────
-router.post('/:id/ssl-certificates', verifyJWT, async (req, res) => {
+// ───────────────────────────────────────────────
+router.post('/:id/ssl-certificates', verifyJWT, requirePermission('services.create'), async (req, res) => {
   let clientId;
   let hostname;
   try {
@@ -1981,21 +1982,21 @@ router.post('/:id/ssl-certificates', verifyJWT, async (req, res) => {
           return res.json(mapSslCertificateRow(existing.rows[0]));
         }
       } catch (_) {
-        /* ignore */
+ /* ignore */
       }
     }
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
     }
-    console.error("Erreur POST ssl-certificates:", err);
+    console.error("Error POST ssl-certificates:", err);
     res.status(500).json({ error: "Erreur lors de l'ajout du certificat SSL", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🔒 POST /:id/ssl-certificates/check — Vérifier tous les certificats (TLS)
+// 🔒 POST /:id/ssl-certificates/check — Check all certificates (TLS)
 // ───────────────────────────────────────────────
-router.post('/:id/ssl-certificates/check', verifyJWT, async (req, res) => {
+router.post('/:id/ssl-certificates/check', verifyJWT, requirePermission('services.edit'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2020,15 +2021,15 @@ router.post('/:id/ssl-certificates/check', verifyJWT, async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
     }
-    console.error("Erreur POST ssl-certificates/check:", err);
+    console.error("Error POST ssl-certificates/check:", err);
     res.status(500).json({ error: "Erreur lors de la vérification SSL", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🔒 POST /:id/ssl-certificates/:certId/check — Vérifier un certificat
+// 🔒 POST /:id/ssl-certificates/:certId/check — Check one certificate
 // ───────────────────────────────────────────────
-router.post('/:id/ssl-certificates/:certId/check', verifyJWT, async (req, res) => {
+router.post('/:id/ssl-certificates/:certId/check', verifyJWT, requirePermission('services.edit'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2056,15 +2057,15 @@ router.post('/:id/ssl-certificates/:certId/check', verifyJWT, async (req, res) =
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
     }
-    console.error("Erreur POST ssl-certificates/:certId/check:", err);
+    console.error("Error POST ssl-certificates/:certId/check:", err);
     res.status(500).json({ error: "Erreur lors de la vérification SSL", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🔒 PUT /:id/ssl-certificates/:certId — Modifier un hôte surveillé
 // ───────────────────────────────────────────────
-router.put('/:id/ssl-certificates/:certId', verifyJWT, async (req, res) => {
+// ───────────────────────────────────────────────
+router.put('/:id/ssl-certificates/:certId', verifyJWT, requirePermission('services.edit'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2120,15 +2121,15 @@ router.put('/:id/ssl-certificates/:certId', verifyJWT, async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
     }
-    console.error("Erreur PUT ssl-certificates:", err);
+    console.error("Error PUT ssl-certificates:", err);
     res.status(500).json({ error: "Erreur lors de la mise à jour du certificat SSL", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🔒 DELETE /:id/ssl-certificates/:certId — Supprimer un hôte surveillé
 // ───────────────────────────────────────────────
-router.delete('/:id/ssl-certificates/:certId', verifyJWT, async (req, res) => {
+// ───────────────────────────────────────────────
+router.delete('/:id/ssl-certificates/:certId', verifyJWT, requirePermission('services.delete'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2152,13 +2153,13 @@ router.delete('/:id/ssl-certificates/:certId', verifyJWT, async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module SSL non disponible (migration requise)" });
     }
-    console.error("Erreur DELETE ssl-certificates:", err);
+    console.error("Error DELETE ssl-certificates:", err);
     res.status(500).json({ error: "Erreur lors de la suppression du certificat SSL", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📄 GET /:id/licences — Licences et abonnements d'un client
+// 📄 GET /:id/licenses — Licenses and subscriptions for a client
 // ───────────────────────────────────────────────
 router.get('/:id/licences', async (req, res) => {
   try {
@@ -2180,7 +2181,7 @@ router.get('/:id/licences', async (req, res) => {
     if (err.code === "42P01") {
       return res.json([]);
     }
-    console.error("Erreur GET licences:", err);
+    console.error("Error GET licences:", err);
     res.status(500).json({
       error: "Erreur lors de la récupération des licences",
       details: err.message,
@@ -2189,9 +2190,9 @@ router.get('/:id/licences', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📄 POST /:id/licences — Ajouter une licence / abonnement
+// 📄 POST /:id/licenses — Add a license / subscription
 // ───────────────────────────────────────────────
-router.post('/:id/licences', verifyJWT, async (req, res) => {
+router.post('/:id/licences', verifyJWT, requirePermission('services.create'), async (req, res) => {
   let clientId;
   let nom;
   try {
@@ -2232,21 +2233,21 @@ router.post('/:id/licences', verifyJWT, async (req, res) => {
           return res.json(mapLicenceRow(existing.rows[0]));
         }
       } catch (_) {
-        /* ignore */
+ /* ignore */
       }
     }
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module licences non disponible (migration requise)" });
     }
-    console.error("Erreur POST licences:", err);
+    console.error("Error POST licences:", err);
     res.status(500).json({ error: "Erreur lors de l'ajout de la licence", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📄 PUT /:id/licences/:licenceId — Modifier une licence
+// 📄 PUT /:id/licenses/:licenseId — Update a license
 // ───────────────────────────────────────────────
-router.put('/:id/licences/:licenceId', verifyJWT, async (req, res) => {
+router.put('/:id/licences/:licenceId', verifyJWT, requirePermission('services.edit'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2298,15 +2299,15 @@ router.put('/:id/licences/:licenceId', verifyJWT, async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module licences non disponible (migration requise)" });
     }
-    console.error("Erreur PUT licences:", err);
+    console.error("Error PUT licences:", err);
     res.status(500).json({ error: "Erreur lors de la mise à jour de la licence", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📄 DELETE /:id/licences/:licenceId — Supprimer une licence
+// 📄 DELETE /:id/licenses/:licenseId — Delete a license
 // ───────────────────────────────────────────────
-router.delete('/:id/licences/:licenceId', verifyJWT, async (req, res) => {
+router.delete('/:id/licences/:licenceId', verifyJWT, requirePermission('services.delete'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2330,13 +2331,13 @@ router.delete('/:id/licences/:licenceId', verifyJWT, async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module licences non disponible (migration requise)" });
     }
-    console.error("Erreur DELETE licences:", err);
+    console.error("Error DELETE licences:", err);
     res.status(500).json({ error: "Erreur lors de la suppression de la licence", details: err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📦 Matériel personnalisé (familles configurables)
+// ───────────────────────────────────────────────
 // ───────────────────────────────────────────────
 router.get('/:id/custom-equipment', async (req, res) => {
   try {
@@ -2351,7 +2352,7 @@ router.get('/:id/custom-equipment', async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
     }
-    console.error("Erreur GET custom-equipment:", err);
+    console.error("Error GET custom-equipment:", err);
     res.status(500).json({ error: "Erreur lors de la récupération du matériel personnalisé" });
   }
 });
@@ -2376,12 +2377,12 @@ router.get('/:id/custom-equipment-map', async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
     }
-    console.error("Erreur GET custom-equipment-map:", err);
+    console.error("Error GET custom-equipment-map:", err);
     res.status(500).json({ error: "Erreur lors de la récupération de la cartographie matériel" });
   }
 });
 
-router.post('/:id/custom-equipment/:familyKey', verifyJWT, async (req, res) => {
+router.post('/:id/custom-equipment/:familyKey', verifyJWT, requirePermission('infrastructure.edit'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2397,12 +2398,12 @@ router.post('/:id/custom-equipment/:familyKey', verifyJWT, async (req, res) => {
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
     }
-    console.error("Erreur POST custom-equipment:", err);
+    console.error("Error POST custom-equipment:", err);
     res.status(500).json({ error: "Erreur lors de la création du matériel" });
   }
 });
 
-router.put('/:id/custom-equipment/:familyKey/:itemId', verifyJWT, async (req, res) => {
+router.put('/:id/custom-equipment/:familyKey/:itemId', verifyJWT, requirePermission('infrastructure.edit'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2419,12 +2420,12 @@ router.put('/:id/custom-equipment/:familyKey/:itemId', verifyJWT, async (req, re
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
     }
-    console.error("Erreur PUT custom-equipment:", err);
+    console.error("Error PUT custom-equipment:", err);
     res.status(500).json({ error: "Erreur lors de la mise à jour du matériel" });
   }
 });
 
-router.delete('/:id/custom-equipment/:familyKey/:itemId', verifyJWT, async (req, res) => {
+router.delete('/:id/custom-equipment/:familyKey/:itemId', verifyJWT, requirePermission('infrastructure.edit'), async (req, res) => {
   try {
     const clientId = await resolveNumericClientId(req.params.id);
     if (!clientId) {
@@ -2441,27 +2442,27 @@ router.delete('/:id/custom-equipment/:familyKey/:itemId', verifyJWT, async (req,
     if (err.code === "42P01") {
       return res.status(503).json({ error: "Module familles matériel non disponible (migration requise)" });
     }
-    console.error("Erreur DELETE custom-equipment:", err);
+    console.error("Error DELETE custom-equipment:", err);
     res.status(500).json({ error: "Erreur lors de la suppression du matériel" });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /:id/logs — Purge de tous les logs d'un client
+// 🗑️ DELETE /:id/logs — Purge all logs for a client
 // ───────────────────────────────────────────────
 router.delete('/:id/logs', verifyJWT, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Garder l'ID original (UUID ou numérique) pour la table des logs
+    // Ensure clientId is numeric
     const originalClientId = id;
     let numericClientId = id;
 
-    // Déterminer si l'id est un UUID ou un ID numérique
+    // Resolve connected user (numeric ID only)
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     if (uuidRegex.test(id)) {
-      // C'est un UUID, récupérer l'ID numérique pour les requêtes WHERE
+      // Insert purge log entry
       const clientResult = await pool.query(
         'SELECT id FROM v_b_clients WHERE id::text = $1',
         [id]
@@ -2473,23 +2474,23 @@ router.delete('/:id/logs', verifyJWT, async (req, res) => {
       console.log(`🔄 DELETE logs: Conversion UUID ${id} → ID numérique ${numericClientId}`);
     }
 
-    // Utiliser l'ID original pour les logs (respecte le schéma de la table)
+    // Use original ID for logs (matches table schema)
     const logClientId = originalClientId;
 
-    // Récupérer le nombre de logs avant suppression pour le log
+    // Count logs before deletion for audit log
     const countResult = await pool.query(
       'SELECT COUNT(*) as total FROM v_b_clients_logs WHERE client_id::text = $1',
       [logClientId]
     );
     const logsCount = parseInt(countResult.rows[0].total) || 0;
 
-    // Supprimer tous les logs du client
+    // Delete all client logs
     const deleteResult = await pool.query(
       'DELETE FROM v_b_clients_logs WHERE client_id::text = $1',
       [logClientId]
     );
 
-    // Créer un log de l'action de purge
+    // Create purge audit log entry
     const rawUserId = req.user?.id || req.user?.user_id || null;
     const uuidRegexUser = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     const userId = rawUserId && uuidRegexUser.test(String(rawUserId)) ? String(rawUserId) : null;
@@ -2510,8 +2511,6 @@ router.delete('/:id/logs', verifyJWT, async (req, res) => {
       ]
     );
 
-    console.log(`🗑️ Logs purgés pour le client ${logClientId}: ${logsCount} logs supprimés`);
-
     res.json({
       success: true,
       message: `Logs purgés avec succès`,
@@ -2520,7 +2519,7 @@ router.delete('/:id/logs', verifyJWT, async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Erreur lors de la purge des logs du client:', err);
+    console.error('Error purging client logs:', err);
     res.status(500).json({
       error: "Erreur lors de la purge des logs",
       details: err.message,
@@ -2530,12 +2529,12 @@ router.delete('/:id/logs', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🏷️ Étiquettes & notes client
+// ───────────────────────────────────────────────
 // ───────────────────────────────────────────────
 registerClientMetaRoutes(router);
 
 // ───────────────────────────────────────────────
-// 🔍 GET /:id/deletion-check — Vérifie si une entreprise peut être supprimée
+// 🔍 GET /:id/deletion-check — Check whether a company can be deleted
 // ───────────────────────────────────────────────
 router.get('/:id/deletion-check', async (req, res) => {
   try {
@@ -2556,8 +2555,8 @@ router.get('/:id/deletion-check', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /:id — Récupération d'un client par ID (avec modules)
-// ⚠️ Cette route doit être APRÈS /general/:id pour éviter les conflits
+// 📥 GET /:id — Fetch a client by ID (with modules)
+// 📥 GET /:id — Fetch a client by ID (with modules)
 // ───────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
@@ -2575,7 +2574,7 @@ router.get('/:id', async (req, res) => {
     
     const client = result.rows[0];
     
-    // Charger les modules depuis les nouvelles tables (Pro uniquement)
+    // Load modules from new tables (Pro only)
     if (!isCommunity()) {
     try {
       const rawModulesData = {};
@@ -2613,7 +2612,7 @@ router.get('/:id', async (req, res) => {
             } else throw colErr;
           }
           
-          // Parser data si c'est une string (au cas où PostgreSQL ne le parse pas automatiquement)
+          // Parse data when it is a string (when PostgreSQL does not auto-parse JSON)
           const parsedRows = moduleResult.rows.map(row => {
             if (row.data && typeof row.data === 'string') {
               try {
@@ -2653,7 +2652,7 @@ router.get('/:id', async (req, res) => {
       client.modules_monitoring = transformed.modules_monitoring || {};
       client.equipements = transformed.equipements || {};
     } catch (moduleErr) {
-      // Si erreur lors du chargement des modules, continuer sans
+      // If module loading fails, continue without modules
       client.modules = {};
       client.modules_monitoring = {};
       client.equipements = {};
@@ -2664,7 +2663,7 @@ router.get('/:id', async (req, res) => {
       client.equipements = {};
     }
     
-    // Parser contrat
+    // Parse contract JSON
     if (client.contrat && typeof client.contrat === 'string') {
       try {
         client.contrat = JSON.parse(client.contrat);
@@ -2673,7 +2672,7 @@ router.get('/:id', async (req, res) => {
       }
     }
     
-    // Parser options (nouveau) ou modules (ancien) pour compatibilité
+    // Parse options (new) or modules (legacy) for compatibility
     let clientOptions = client.options || client.modules || {};
     if (clientOptions && typeof clientOptions === 'string') {
       try {
@@ -2683,9 +2682,9 @@ router.get('/:id', async (req, res) => {
       }
     }
     client.options = clientOptions;
-    client.modules = clientOptions; // Garder modules pour compatibilité frontend
+    client.modules = clientOptions; // Keep modules alias for frontend compatibility
     
-    // Parser sites
+    // Parse sites JSON
     if (client.sites) {
       if (typeof client.sites === 'string') {
         try {
@@ -2698,7 +2697,7 @@ router.get('/:id', async (req, res) => {
       client.sites = [];
     }
     
-    // Parser ssid (nouveau) ou ssids (ancien) pour compatibilité
+    // Parse ssid (new) or ssids (legacy) for compatibility
     let clientSSID = client.ssid || client.ssids || [];
     if (clientSSID && typeof clientSSID === 'string') {
       try {
@@ -2708,9 +2707,9 @@ router.get('/:id', async (req, res) => {
       }
     }
     client.ssid = clientSSID;
-    client.ssids = clientSSID; // Garder ssids pour compatibilité frontend
+    client.ssids = clientSSID; // Keep ssids alias for frontend compatibility
 
-    // Définir le nom commercial depuis les données de jointure
+    // Set commercial name from join data
     client.commercial = client.username || client.user_email || null;
 
     res.json(client);
@@ -2720,18 +2719,18 @@ router.get('/:id', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// ➕ POST / — Création d'un client (monitoring)
+// ➕ POST / — Create a client (monitoring)
 // ───────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('clients.create'), async (req, res) => {
   try {
     await assertCommunityClientsLimit(1);
     const { name, modules, options, modules_monitoring, contrat, commercialId } = req.body;
-    // Support de l'ancienne structure (modules) et de la nouvelle (options)
+    // Support legacy structure (modules) and new (options)
     const defaultOptions = options || modules || {};
     const modulesWithMonitoring = { ...defaultOptions, Monitoring: true };
     const defaultContrat = contrat || {};
 
-    // Construire la requête INSERT dynamiquement selon si commercialId est fourni
+    // Build INSERT dynamically depending on whether commercialId is provided
     const insertFields = ['name', 'options', 'contrat'];
     const insertValues = [name, JSON.stringify(modulesWithMonitoring), JSON.stringify(defaultContrat)];
     let paramIndex = 4;
@@ -2764,9 +2763,9 @@ router.post('/', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// ➕ POST /general — Création d'un client général
 // ───────────────────────────────────────────────
-router.post('/general', async (req, res) => {
+// ───────────────────────────────────────────────
+router.post('/general', requirePermission('clients.create'), async (req, res) => {
   try {
     await assertCommunityClientsLimit(1);
     const { name, clientNumber, client_number, contrat, options, modules, modules_monitoring, sites, ssid, ssids, commercialId, address, siret, secteur } = req.body;
@@ -2775,7 +2774,7 @@ router.post('/general', async (req, res) => {
     );
 
 
-    // Support de l'ancienne structure (modules) et de la nouvelle (options)
+    // Support legacy structure (modules) and new (options)
     const defaultOptions = options || modules || {
       Support: false,
       Curatif: false,
@@ -2787,14 +2786,13 @@ router.post('/general', async (req, res) => {
     
     const finalContrat = contrat || {};
 
-    // IMPORTANT: Utiliser 'options' et non 'modules' (la colonne 'modules' n'existe plus)
-    // Version du code: 2026-01-12 - Utilise 'options' au lieu de 'modules'
+    // IMPORTANT: Use 'options', not 'modules' (modules column no longer exists)
+    // Code version: 2026-01-12 — uses 'options' instead of 'modules'
     
     const cleanSites = (sites && Array.isArray(sites)) ? sites : [];
     assertCommunitySitesLimit(cleanSites);
     
-    // Construire la requête INSERT dynamiquement selon si commercialId est fourni
-    // On stocke désormais les modules de monitoring dans la colonne JSONB "modules"
+    // Build INSERT dynamically depending on whether commercialId is provided
     const insertFields = ['name', 'contrat', 'options', 'sites', 'modules'];
     const insertValues = [
       name,
@@ -2804,7 +2802,7 @@ router.post('/general', async (req, res) => {
       JSON.stringify(defaultModulesMonitoring || {})
     ];
 
-    // Champs optionnels supplémentaires
+    // Legacy route comment: GET /:id/logs
     if (address !== undefined) {
       insertFields.push('address');
       insertValues.push(address);
@@ -2845,28 +2843,28 @@ router.post('/general', async (req, res) => {
     if (err?.code?.startsWith("COMMUNITY_")) {
       return sendCommunityLimitError(res, err);
     }
-    console.error('[POST /general] ERREUR SQL:', err.message);
-    console.error('[POST /general] Code erreur:', err.code);
-    console.error('[POST /general] Requete SQL utilisee: INSERT avec colonne "options"');
+    console.error('[POST /general] SQL error:', err.message);
+    console.error('[POST /general] Error code:', err.code);
+    console.error('[POST /general] SQL used: INSERT with "options" column');
     res.status(500).json({ error: "Erreur interne (SQL)", details: err.message, code: err.code });
   }
 });
 
 // ───────────────────────────────────────────────
-// ✏️ PUT /:id — Mise à jour d'un client (monitoring ou général)
 // ───────────────────────────────────────────────
-router.put('/:id', verifyJWT, async (req, res) => {
+// ───────────────────────────────────────────────
+router.put('/:id', verifyJWT, requirePermission('clients.edit'), async (req, res) => {
   try {
     const availableColumns = await getClientsAvailableColumns();
     const hasClientColumn = (columnName) => availableColumns.has(String(columnName || "").trim());
-    // Si la requête contient des champs généraux (comme office365_data, ssids, siret, secteur), utiliser la logique de mise à jour partielle
+    // Determine whether id is a UUID or numeric ID
     const { name, clientNumber, client_number, email, phone, address, contrat, options, modules, modules_monitoring, sites, ssid, ssids, office365_data, commercialId, siret, secteur } = req.body;
     const resolvedClientNumber =
       clientNumber !== undefined || client_number !== undefined
         ? normalizeClientNumber(clientNumber !== undefined ? clientNumber : client_number)
         : undefined;
     
-    // Si des champs généraux OU des modules de monitoring sont présents, ne mettre à jour que ceux envoyés (évite d'écraser name en null)
+    // UUID provided — resolve numeric ID
     if (name !== undefined || clientNumber !== undefined || client_number !== undefined || email !== undefined || phone !== undefined || address !== undefined || office365_data !== undefined || sites !== undefined || ssid !== undefined || ssids !== undefined || options !== undefined || modules !== undefined || contrat !== undefined || commercialId !== undefined || siret !== undefined || secteur !== undefined || modules_monitoring !== undefined) {
       const previousClientSnapshot = await getClientSnapshotForNotification(req.params.id);
       let updateFields = [];
@@ -2916,14 +2914,14 @@ router.put('/:id', verifyJWT, async (req, res) => {
         updateValues.push(JSON.stringify(finalContrat));
       }
       
-      // Support de l'ancienne structure (modules) et de la nouvelle (options)
+      // Support legacy structure (modules) and new (options)
       if ((options !== undefined || modules !== undefined) && hasClientColumn("options")) {
         finalOptions = options || modules || {};
         updateFields.push(`options = $${paramIndex++}`);
         updateValues.push(JSON.stringify(finalOptions));
       }
       
-      // Nouveau : stocker les modules de monitoring dans v_b_clients.modules (JSONB)
+      // New approach: store monitoring modules in v_b_clients.modules (JSONB)
       if (modules_monitoring !== undefined && hasClientColumn("modules")) {
         finalModulesMonitoring = modules_monitoring || {};
         updateFields.push(`modules = $${paramIndex++}`);
@@ -2954,7 +2952,7 @@ router.put('/:id', verifyJWT, async (req, res) => {
         return res.status(400).json({ error: "Aucune donnée à mettre à jour" });
       }
 
-      // Ajouter l'ID à la fin des valeurs
+      // Append ID to final values
       updateValues.push(req.params.id);
       const idParamIndex = paramIndex;
 
@@ -3063,8 +3061,8 @@ router.put('/:id', verifyJWT, async (req, res) => {
       invalidateClientsListCache();
       res.json({ success: true });
     } else {
-      // Logique originale pour les clients monitoring (body sans champs généraux)
-      // Support de l'ancienne structure (modules) et de la nouvelle (options)
+      // Ensure clientId is numeric for logs
+      // Support legacy structure (modules) and new (options)
       const defaultOptions = options || modules || {};
       const modulesWithMonitoring = { ...defaultOptions, Monitoring: true };
       const defaultContrat = contrat || {};
@@ -3092,9 +3090,9 @@ router.put('/:id', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// ✏️ PUT /general/:id — Mise à jour d'un client général
 // ───────────────────────────────────────────────
-router.put('/general/:id', verifyJWT, async (req, res) => {
+// ───────────────────────────────────────────────
+router.put('/general/:id', verifyJWT, requirePermission('clients.edit'), async (req, res) => {
   try {
     const availableColumns = await getClientsAvailableColumns();
     const hasClientColumn = (columnName) => availableColumns.has(String(columnName || "").trim());
@@ -3151,14 +3149,14 @@ router.put('/general/:id', verifyJWT, async (req, res) => {
       updateValues.push(JSON.stringify(finalContrat));
     }
     
-    // Support de l'ancienne structure (modules) et de la nouvelle (options)
+    // Support legacy structure (modules) and new (options)
     if ((options !== undefined || modules !== undefined) && hasClientColumn("options")) {
       finalOptions = options || modules || {};
       updateFields.push(`options = $${paramIndex++}`);
       updateValues.push(JSON.stringify(finalOptions));
     }
     
-    // Nouveau : stocker les modules de monitoring dans v_b_clients.modules (JSONB)
+    // New approach: store monitoring modules in v_b_clients.modules (JSONB)
     if (modules_monitoring !== undefined && hasClientColumn("modules")) {
       finalModulesMonitoring = modules_monitoring || {};
       updateFields.push(`modules = $${paramIndex++}`);
@@ -3219,7 +3217,7 @@ router.put('/general/:id', verifyJWT, async (req, res) => {
         }
       });
 
-    // Enregistrer le log de modification
+    // Save modification audit log
     try {
       const userId = req.user?.id || req.user?.user_id || null;
       let userName = 'Utilisateur inconnu';
@@ -3262,8 +3260,8 @@ router.put('/general/:id', verifyJWT, async (req, res) => {
         ]
       );
     } catch (logError) {
-      console.warn('Erreur lors de l\'enregistrement du log:', logError);
-      // Ne pas échouer la requête pour autant
+      console.warn('Error writing log:', logError);
+      // Legacy route comment: GET /:id/antivirus
     }
 
     invalidateClientsListCache();
@@ -3341,9 +3339,9 @@ router.put('/general/:id', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// ❌ DELETE /:id — Suppression d'un client
+// ❌ DELETE /:id — Delete a client
 // ───────────────────────────────────────────────
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('clients.delete'), async (req, res) => {
   try {
     const { id } = req.params;
     const deletionStatus = await getClientDeletionStatus(id);
@@ -3366,9 +3364,9 @@ router.delete('/:id', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📦 Routes Modules (nécessitent authentification)
 // ───────────────────────────────────────────────
-// Ces routes sont montées sur /api/clients/modules dans server.js
+// ───────────────────────────────────────────────
+// ───────────────────────────────────────────────
 const modulesRouter = express.Router();
 modulesRouter.use(verifyJWT);
 
@@ -3401,8 +3399,29 @@ function resolveTable(family) {
   return TABLES[key] || null;
 }
 
-// GET liste d'une famille
-modulesRouter.get('/:clientId/:family', async (req, res) => {
+const SERVICE_MODULE_FAMILIES = new Set([
+  "save",
+  "antivirus",
+  "antispam",
+  "ndd",
+  "ssl",
+  "licences",
+  "o365",
+]);
+
+function requireModulePermission(action) {
+  const serviceKey = `services.${action}`;
+  return (req, res, next) => {
+    const family = String(req.params.family || "").toLowerCase();
+    if (SERVICE_MODULE_FAMILIES.has(family)) {
+      return requirePermission(serviceKey)(req, res, next);
+    }
+    return requirePermission("infrastructure.edit")(req, res, next);
+  };
+}
+
+// GET list of families
+modulesRouter.get('/:clientId/:family', requireAnyPermission("services.view", "infrastructure.view"), async (req, res) => {
   try {
     const { clientId, family } = req.params;
     const table = resolveTable(family);
@@ -3421,8 +3440,8 @@ modulesRouter.get('/:clientId/:family', async (req, res) => {
   }
 });
 
-// POST création
-modulesRouter.post('/:clientId/:family', async (req, res) => {
+// Determine whether id is a UUID or numeric ID
+modulesRouter.post('/:clientId/:family', requireModulePermission("create"), async (req, res) => {
   try {
     const { clientId, family } = req.params;
     const { item_key, name, data, is_active } = req.body || {};
@@ -3486,8 +3505,8 @@ modulesRouter.post('/:clientId/:family', async (req, res) => {
   }
 });
 
-// GET logs d'un équipement
-modulesRouter.get('/:clientId/:family/:equipmentName/logs', async (req, res) => {
+// GET logs for equipment
+modulesRouter.get('/:clientId/:family/:equipmentName/logs', requireAnyPermission("services.view", "infrastructure.view"), async (req, res) => {
   try {
     const { clientId, family, equipmentName } = req.params;
     const page = parseInt(req.query.page) || 1;
@@ -3547,8 +3566,8 @@ modulesRouter.get('/:clientId/:family/:equipmentName/logs', async (req, res) => 
   }
 });
 
-// DELETE — purge des logs d'un équipement
-modulesRouter.delete('/:clientId/:family/:equipmentName/logs', async (req, res) => {
+// DELETE — purge logs for equipment
+modulesRouter.delete('/:clientId/:family/:equipmentName/logs', requireModulePermission("edit"), async (req, res) => {
   try {
     const { clientId, family, equipmentName } = req.params;
 
@@ -3612,7 +3631,7 @@ async function resolveRequestUserName(req) {
       };
     }
   } catch {
-    // fallback ci-dessous
+    // fallback below
   }
   return {
     userId,
@@ -3620,8 +3639,8 @@ async function resolveRequestUserName(req) {
   };
 }
 
-// POST — journaliser une action sur un équipement (connexion distante, etc.)
-modulesRouter.post('/:clientId/:family/:equipmentName/logs', async (req, res) => {
+// POST — log an action on equipment (remote connection, etc.)
+modulesRouter.post('/:clientId/:family/:equipmentName/logs', requireModulePermission("edit"), async (req, res) => {
   try {
     const { clientId, family, equipmentName } = req.params;
     const { action, details, equipment_id } = req.body || {};
@@ -3655,8 +3674,8 @@ modulesRouter.post('/:clientId/:family/:equipmentName/logs', async (req, res) =>
   }
 });
 
-// PUT mise à jour
-modulesRouter.put('/:clientId/:family/:id', async (req, res) => {
+// PUT update
+modulesRouter.put('/:clientId/:family/:id', requireModulePermission("edit"), async (req, res) => {
   try {
     const { clientId, family, id } = req.params;
     const { item_key, name, data, is_active } = req.body || {};
@@ -3679,9 +3698,9 @@ modulesRouter.put('/:clientId/:family/:id', async (req, res) => {
     oldData = oldData || {};
     const newData = data || {};
 
-    // Pour les serveurs et le stockage (NAS/SAN), fusionner avec l'existant
-    // - Serveurs : s'assurer que role (tableau) est bien persisté
-    // - NAS : préserver les champs existants (dont quickConnect) si non envoyés
+    // For servers and storage (NAS/SAN), merge with existing rows
+    // UUID provided — resolve numeric ID
+    // Ensure clientId is numeric
     const dataToSave =
       (family === 'servers' && typeof newData === 'object')
         ? {
@@ -3718,7 +3737,7 @@ modulesRouter.put('/:clientId/:family/:id', async (req, res) => {
     const updatedItem = result.rows[0];
     const equipmentName = name || item_key || oldItem.name || oldItem.item_key || updatedItem.name || updatedItem.item_key || '';
 
-    // Enregistrer le log de modification (code simplifié pour la concision)
+    // Fetch client antivirus data
     try {
       const userId = req.user?.id || req.user?.user_id || null;
       let userName = 'Utilisateur inconnu';
@@ -3895,8 +3914,8 @@ modulesRouter.put('/:clientId/:family/:id', async (req, res) => {
   }
 });
 
-// PATCH mapping CheckMK — Enregistrer le mapping sur le périphérique (identifié par client_id + nom)
-modulesRouter.patch('/:clientId/:family/checkmk-mapping', async (req, res) => {
+// Transform JSON data column according to actual structure
+modulesRouter.patch('/:clientId/:family/checkmk-mapping', requireModulePermission("edit"), async (req, res) => {
   try {
     const { clientId, family } = req.params;
     const { equipmentName, equipment_id, checkmk_host_name, checkmk_site, checkmk_service_name } = req.body || {};
@@ -3979,13 +3998,13 @@ modulesRouter.patch('/:clientId/:family/checkmk-mapping', async (req, res) => {
       is_active: true
     });
   } catch (err) {
-    console.error("Erreur PATCH checkmk-mapping:", err);
+    console.error("Error PATCH checkmk-mapping:", err);
     res.status(500).json({ error: "Erreur lors de la mise à jour du mapping CheckMK" });
   }
 });
 
-// DELETE suppression
-modulesRouter.delete('/:clientId/:family/:id', async (req, res) => {
+// DELETE removal
+modulesRouter.delete('/:clientId/:family/:id', requireModulePermission("delete"), async (req, res) => {
   try {
     const { clientId, family, id } = req.params;
     const table = resolveTable(family);
@@ -4026,7 +4045,7 @@ modulesRouter.delete('/:clientId/:family/:id', async (req, res) => {
     };
     const equipmentType = familyToEquipmentType[family?.toLowerCase()];
 
-    // Supprimer le mapping CheckMK en utilisant l'equipment_id
+    // Delete CheckMK mapping using equipment_id
     if (equipmentType) {
       try {
         await pool.query(
@@ -4046,8 +4065,8 @@ modulesRouter.delete('/:clientId/:family/:id', async (req, res) => {
   }
 });
 
-// POST sync — Synchronisation complète
-modulesRouter.post('/:clientId/:family/sync', async (req, res) => {
+// Mapping based on v_b_clients_m_antivirus JSON structure
+modulesRouter.post('/:clientId/:family/sync', requireModulePermission("edit"), async (req, res) => {
   try {
     const { clientId, family } = req.params;
     const { items } = req.body || {};
@@ -4143,8 +4162,8 @@ modulesRouter.post('/:clientId/:family/sync', async (req, res) => {
           );
         }
       } else {
-        // Pour les autres familles (internet, servers, firewall, switch, wifi, stockage, ndd)
-        // Utiliser la même logique que save/antispam pour préserver les IDs et les mappings
+        // For other families (internet, servers, firewall, switch, wifi, storage, ndd)
+        // Additional information available
         const existingIdsResult = await client.query(
           `SELECT id FROM ${table} WHERE client_id = $1`,
           [clientId]
@@ -4165,7 +4184,7 @@ modulesRouter.post('/:clientId/:family/sync', async (req, res) => {
           }
           
           if (itemId && existingIds.has(itemId)) {
-            // Mettre à jour l'enregistrement existant (préserve l'ID)
+            // Legacy route comment: GET /:id/o365
             const result = await client.query(
               `UPDATE ${table}
                SET item_key = $1, name = $2, data = $3, is_active = $4, updated_at = NOW()
@@ -4178,7 +4197,7 @@ modulesRouter.post('/:clientId/:family/sync', async (req, res) => {
               processedIds.add(itemId);
             }
           } else {
-            // Insérer un nouvel enregistrement
+            //    (snapshots stored in v_b_clients_m_o365)
             const result = await client.query(
               `INSERT INTO ${table} (client_id, item_key, name, data, is_active)
                VALUES ($1, $2, $3, $4, $5)
@@ -4192,7 +4211,7 @@ modulesRouter.post('/:clientId/:family/sync', async (req, res) => {
           }
         }
         
-        // Supprimer uniquement les IDs qui ne sont plus dans la nouvelle liste
+        // Delete only IDs no longer in the new list
         const idsToDelete = Array.from(existingIds).filter(id => !processedIds.has(id));
         if (idsToDelete.length > 0) {
           await client.query(
@@ -4218,10 +4237,10 @@ modulesRouter.post('/:clientId/:family/sync', async (req, res) => {
 
 
 // ───────────────────────────────────────────────
-// 📋 ROUTES CONTACTS — GET, POST, PUT, DELETE
+// 📋 CONTACT ROUTES — GET, POST, PUT, DELETE
 // ───────────────────────────────────────────────
 
-// 📥 GET /contacts — Liste des contacts
+// 📥 GET /contacts — List contacts
 router.get('/contacts', async (req, res) => {
   try {
     const clientId = req.query.client_id;
@@ -4257,8 +4276,8 @@ router.get('/contacts', async (req, res) => {
   }
 });
 
-// 📝 POST /contacts — Ajouter un contact
-router.post('/contacts', verifyJWT, async (req, res) => {
+// 📝 POST /contacts — Add a contact
+router.post('/contacts', verifyJWT, requirePermission('contacts.create'), async (req, res) => {
   try {
     await assertCommunityContactsLimit(1);
     const { nom, prenom, email, telephone, poste, statut, client_id } = req.body;
@@ -4283,8 +4302,8 @@ router.post('/contacts', verifyJWT, async (req, res) => {
   }
 });
 
-// 📝 PUT /contacts/:id — Modifier un contact
-router.put('/contacts/:id', verifyJWT, async (req, res) => {
+// 📝 PUT /contacts/:id — Update a contact
+router.put('/contacts/:id', verifyJWT, requirePermission('contacts.edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const { nom, prenom, email, telephone, poste, statut, client_id } = req.body;
@@ -4310,8 +4329,8 @@ router.put('/contacts/:id', verifyJWT, async (req, res) => {
   }
 });
 
-// 🗑️ DELETE /contacts/:id — Supprimer un contact
-router.delete('/contacts/:id', verifyJWT, async (req, res) => {
+// 🗑️ DELETE /contacts/:id — Delete a contact
+router.delete('/contacts/:id', verifyJWT, requirePermission('contacts.delete'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -4331,7 +4350,7 @@ router.delete('/contacts/:id', verifyJWT, async (req, res) => {
   }
 });
 
-// Exporter le router modules séparément pour être monté sur /api/clients/modules
+// Determine whether id is a UUID or numeric ID
 export const modulesRouterExport = modulesRouter;
 
 export default router;

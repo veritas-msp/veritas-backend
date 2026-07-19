@@ -20,7 +20,7 @@ export async function hasVisibleToClientColumn() {
   return visibleToClientColumnCache;
 }
 
-/** Applique la migration visible_to_client si nécessaire (coffre-fort portail). */
+/** Applies visible_to_client migration if needed (client portal vault). */
 export async function ensureVisibleToClientColumn() {
   if (await hasVisibleToClientColumn()) return true;
   try {

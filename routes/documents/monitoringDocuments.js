@@ -1,23 +1,24 @@
 import express from "express";
 import { pool } from "../../database/db.js";
 import verifyJWT from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/permissions.js";
 import { dispatchNotificationEvent } from "../../services/notificationDispatcher.js";
 
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 📚 GET /api/monitoring-documents — Liste des documents de monitoring
-// Pour les admins : tous les documents
-// Pour les utilisateurs : uniquement leurs documents
+// 📚 GET /api/monitoring-documents — List monitoring documents
+// For admins: all documents
+// For users: only their own documents
 // ───────────────────────────────────────────────
-router.get("/", verifyJWT, async (req, res) => {
+router.get("/", verifyJWT, requirePermission("documents.view"), async (req, res) => {
   const userId = req.user.id;
   const isAdmin = req.user.role === 'admin';
 
   try {
     let result;
     if (isAdmin) {
-      // Admin : récupérer TOUS les documents (y compris ceux dans la corbeille)
+      // 📚 GET /api/monitoring-documents — List monitoring documents
       result = await pool.query(
         `SELECT md.id, md.name, md.report_period, md.config, md.data, 
                 md.created_at, md.updated_at, md.is_trashed, md.user_id,
@@ -28,7 +29,7 @@ router.get("/", verifyJWT, async (req, res) => {
          ORDER BY md.created_at DESC`
       );
     } else {
-      // Utilisateur : uniquement ses documents (y compris ceux dans la corbeille)
+      // User: only their own documents (including those in trash)
       result = await pool.query(
         `SELECT md.id, md.name, md.report_period, md.config, md.data, 
                 md.created_at, md.updated_at, md.is_trashed, md.user_id,
@@ -49,9 +50,9 @@ router.get("/", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📖 GET /api/monitoring-documents/:id — Récupérer un document spécifique
 // ───────────────────────────────────────────────
-router.get("/:id", verifyJWT, async (req, res) => {
+// ───────────────────────────────────────────────
+router.get("/:id", verifyJWT, requirePermission("documents.view"), async (req, res) => {
   const docId = req.params.id;
   const userId = req.user.id;
 
@@ -74,9 +75,9 @@ router.get("/:id", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 💾 POST /api/monitoring-documents — Créer ou mettre à jour un document
+// 💾 POST /api/monitoring-documents — Create or update a document
 // ───────────────────────────────────────────────
-router.post("/", verifyJWT, async (req, res) => {
+router.post("/", verifyJWT, requirePermission("documents.create"), async (req, res) => {
   const { name, client_name, report_period, config, data, overwrite } = req.body;
   const userId = req.user.id;
   if (!name || !client_name || !config || !data) {
@@ -84,7 +85,7 @@ router.post("/", verifyJWT, async (req, res) => {
   }
 
   try {
-    // Vérifier si un document avec le même nom existe déjà pour cet utilisateur
+    // Check whether a document with the same name already exists for the candidate user
     const check = await pool.query(
       `SELECT id FROM v_b_d_monitoring
        WHERE user_id = $1 AND name = $2`,
@@ -96,7 +97,7 @@ router.post("/", verifyJWT, async (req, res) => {
       if (overwrite) {
         documentId = check.rows[0].id;
         
-        // Mettre à jour le document existant
+        // Update existing document
         await pool.query(
           `UPDATE v_b_d_monitoring
            SET client_name = $1, 
@@ -120,7 +121,7 @@ router.post("/", verifyJWT, async (req, res) => {
         return res.status(200).json({ success: false, message: "Document déjà enregistré avec ce nom." });
       }
     } else {
-      // Sinon, insertion
+      // Otherwise, insertion
       const result = await pool.query(
         `INSERT INTO v_b_d_monitoring (name, user_id, client_name, report_period, config, data, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, NOW(), NOW())
@@ -145,10 +146,10 @@ router.post("/", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /api/monitoring-documents/:id — Supprimer (mettre à la corbeille) un document
-// Admin peut supprimer n'importe quel document, utilisateur uniquement les siens
+// 🗑️ DELETE /api/monitoring-documents/:id — Move a document to trash
+// Admin can delete any document; users only their own
 // ───────────────────────────────────────────────
-router.delete("/:id", verifyJWT, async (req, res) => {
+router.delete("/:id", verifyJWT, requirePermission("documents.delete"), async (req, res) => {
   const docId = req.params.id;
   const userId = req.user.id;
   const isAdmin = req.user.role === 'admin';
@@ -178,9 +179,9 @@ router.delete("/:id", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔄 PUT /api/monitoring-documents/:id — Mettre à jour un document existant
+// 🔄 PUT /api/monitoring-documents/:id — Update an existing document
 // ───────────────────────────────────────────────
-router.put("/:id", verifyJWT, async (req, res) => {
+router.put("/:id", verifyJWT, requirePermission("documents.edit"), async (req, res) => {
   const docId = req.params.id;
   const userId = req.user.id;
   const { name, client_name, report_period, config, data } = req.body;
@@ -223,9 +224,9 @@ router.put("/:id", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📝 PATCH /api/monitoring-documents/:id — Modifier uniquement le nom d'un document
+// 📝 PATCH /api/monitoring-documents/:id — Modifier only nom a document
 // ───────────────────────────────────────────────
-router.patch("/:id", verifyJWT, async (req, res) => {
+router.patch("/:id", verifyJWT, requirePermission("documents.edit"), async (req, res) => {
   const docId = req.params.id;
   const userId = req.user.id;
   const { name } = req.body;
@@ -254,10 +255,10 @@ router.patch("/:id", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔄 POST /api/monitoring-documents/:id/restore — Restaurer un document depuis la corbeille
-// Admin peut restaurer n'importe quel document, utilisateur uniquement les siens
+// 🔄 POST /api/monitoring-documents/:id/restore — Restore a document from trash
+// Admin can restore any document; users only their own
 // ───────────────────────────────────────────────
-router.post("/:id/restore", verifyJWT, async (req, res) => {
+router.post("/:id/restore", verifyJWT, requirePermission("documents.edit"), async (req, res) => {
   const docId = req.params.id;
   const userId = req.user.id;
   const isAdmin = req.user.role === 'admin';
@@ -287,9 +288,9 @@ router.post("/:id/restore", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /api/monitoring-documents/:id/purge — Suppression définitive (ADMIN uniquement)
 // ───────────────────────────────────────────────
-router.delete("/:id/purge", verifyJWT, async (req, res) => {
+// ───────────────────────────────────────────────
+router.delete("/:id/purge", verifyJWT, requirePermission("documents.delete"), async (req, res) => {
   const docId = req.params.id;
   const userId = req.user.id;
   const isAdmin = req.user.role === 'admin';

@@ -10,7 +10,7 @@ function normalizeHost(raw) {
 }
 
 /**
- * Vérifie un certificat TLS sur un hôte (port 443 par défaut).
+ * Checks a TLS certificate on a host (port 443 by default).
  * @returns {Promise<object>}
  */
 export function checkSslCertificate(host, port = 443, timeoutMs = 12000) {

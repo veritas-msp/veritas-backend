@@ -75,7 +75,7 @@ async function userIsAgent(userId) {
 
 router.use(verifyJWT);
 
-// Lecture des équipes pour le planning (tous les utilisateurs authentifiés)
+// Read teams for planning (all authenticated users)
 router.get("/planning", async (_req, res) => {
   try {
     await ensureTeamsSchema();

@@ -1,6 +1,7 @@
 import express from "express";
 import { pool } from "../../database/db.js";
 import verifyJWT from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/permissions.js";
 import { rmmEnrollRateLimit } from "../../middleware/rateLimit.js";
 import { generateRmmToken, hashRmmSecret, encryptRmmToken, mapEnrollmentTokenRow } from "../../utils/rmmCrypto.js";
 import {
@@ -18,6 +19,7 @@ import {
   assertCommunityRmmAgentLimit,
   sendCommunityLimitError,
 } from "../../utils/communityLimits.js";
+import { enableMonitoringAlertsForEquipment } from "../../utils/equipmentInventoryScan.js";
 import { isCommunity } from "../../utils/edition.js";
 import { requirePro } from "../../middleware/edition.js";
 import {
@@ -51,11 +53,9 @@ import {
 
 const router = express.Router();
 
+/** Legacy name kept for route declarations — enforces rmm.manage (admin role bypasses). */
 function requireAdmin(req, res, next) {
-  if (String(req.user?.role || "").toLowerCase() !== "admin") {
-    return res.status(403).json({ error: "Accès refusé" });
-  }
-  next();
+  return requirePermission("rmm.manage")(req, res, next);
 }
 
 async function verifyAgentAuth(req, res, next) {
@@ -354,7 +354,7 @@ async function upsertServeur(agent, inventory = {}, meta = {}) {
   };
 }
 
-// ─── Routes agent (sans JWT utilisateur) ─────────────────────────────────────
+// ─── Routes agent (without JWT user) ─────────────────────────────────────
 
 router.post("/enroll", rmmEnrollRateLimit, async (req, res) => {
   try {
@@ -435,6 +435,19 @@ router.post("/enroll", rmmEnrollRateLimit, async (req, res) => {
       });
     } catch (logErr) {
       console.error("[rmm] enroll log:", logErr.message);
+    }
+
+    try {
+      if (settings.alertsEnabledOnEnroll !== false && equipmentId) {
+        await enableMonitoringAlertsForEquipment({
+          clientId: agentRow.client_id,
+          equipmentId,
+          equipmentFamily: upsertResult?.equipmentFamily || equipmentFamily,
+          equipmentName: upsertResult?.veritasName || equipmentName,
+        });
+      }
+    } catch (alertErr) {
+      console.error("[rmm] enroll alerts enable:", alertErr.message);
     }
 
     res.status(201).json({

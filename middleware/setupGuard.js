@@ -2,7 +2,7 @@ import verifyJWT from "./auth.js";
 import { requireRole } from "./roles.js";
 import { getSetupStatus } from "../utils/setupState.js";
 
-/** Bloque l'accès aux routes /api/setup/* une fois l'installation terminée. */
+/** Blocks access to /api/setup/* routes once installation is complete. */
 export function requireSetupIncomplete(req, res, next) {
   getSetupStatus()
     .then(({ needsSetup }) => {
@@ -17,7 +17,7 @@ export function requireSetupIncomplete(req, res, next) {
     .catch(() => next());
 }
 
-/** Routes de test/setup : ouvertes pendant l'assistant d'installation, admin ensuite. */
+/** Test/setup routes: open during setup wizard, admin-only afterward. */
 export function requireSetupOrAdmin(req, res, next) {
   getSetupStatus()
     .then(({ needsSetup }) => {

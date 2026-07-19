@@ -1,11 +1,11 @@
 /**
- * Exporte le schéma public PostgreSQL au format schema_export.csv.
+ * Exporte schema public PostgreSQL to the format schema_export.csv.
  *
  * Usage:
  *   PGHOST=... PGPORT=5432 PGUSER=postgres PGPASSWORD=... PGDATABASE=veritas_db \
  *     node scripts/exportSchemaFromDb.js
  *
- * Ou: node scripts/exportSchemaFromDb.js --host ... --port ... --user ... --password ... --database ...
+ * Ou: node scripts/exportSchemaFromDb.js --host ... --port ... --user ... --password ... --datadatabase ...
  */
 import fs from "fs";
 import path from "path";

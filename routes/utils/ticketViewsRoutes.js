@@ -244,7 +244,7 @@ router.get(
 
       return res.json({ views, statuses });
     } catch (err) {
-      console.error("Erreur comptage vues tickets:", err);
+      console.error("Failed to count ticket views:", err);
       return res.status(500).json({ error: "Erreur lors du comptage des vues tickets" });
     }
   }
@@ -272,7 +272,7 @@ router.get(
       const assignmentMap = await loadAssignmentsByViewIds(rows.map((r) => r.id));
       return res.json(rows.map((row) => mapViewRow(row, assignmentMap[String(row.id)])));
     } catch (err) {
-      console.error("Erreur chargement admin vues tickets:", err);
+      console.error("Failed to load admin ticket views:", err);
       return res.status(500).json({ error: "Erreur lors du chargement des vues tickets" });
     }
   }
@@ -319,7 +319,7 @@ router.get(
       const assignmentMap = await loadAssignmentsByViewIds(rows.map((r) => r.id));
       return res.json(rows.map((row) => mapViewRow(row, assignmentMap[String(row.id)])));
     } catch (err) {
-      console.error("Erreur chargement vues tickets:", err);
+      console.error("Failed to load ticket views:", err);
       return res.status(500).json({ error: "Erreur lors du chargement des vues tickets" });
     }
   }
@@ -406,7 +406,7 @@ router.post(
       const assignmentMap = await loadAssignmentsByViewIds([created.id]);
       return res.status(201).json(mapViewRow(created, assignmentMap[String(created.id)]));
     } catch (err) {
-      console.error("Erreur création vue ticket:", err);
+      console.error("Failed to create vue ticket:", err);
       return res.status(500).json({ error: "Erreur lors de la création de la vue" });
     }
   }
@@ -489,7 +489,7 @@ router.put(
       const assignmentMap = await loadAssignmentsByViewIds([updated.id]);
       return res.json(mapViewRow(updated, assignmentMap[String(updated.id)]));
     } catch (err) {
-      console.error("Erreur mise à jour vue ticket:", err);
+      console.error("Error mise à jour vue ticket:", err);
       return res.status(500).json({ error: "Erreur lors de la mise à jour de la vue" });
     }
   }
@@ -518,7 +518,7 @@ router.delete(
       await pool.query(`DELETE FROM v_b_ticket_views WHERE id = $1`, [req.params.viewId]);
       return res.status(204).send();
     } catch (err) {
-      console.error("Erreur suppression vue ticket:", err);
+      console.error("Failed to delete vue ticket:", err);
       return res.status(500).json({ error: "Erreur lors de la suppression de la vue" });
     }
   }

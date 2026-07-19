@@ -21,7 +21,7 @@ export async function requirePro(req, res, next) {
   }
 }
 
-/** JWT obligatoire puis édition Pro — à utiliser sur tous les montages Pro (sauf webhooks publics). */
+/** Requires JWT then Pro edition — use on all Pro mounts (except public webhooks). */
 export function requireProAuth(req, res, next) {
   verifyJWT(req, res, () => {
     requirePro(req, res, next);

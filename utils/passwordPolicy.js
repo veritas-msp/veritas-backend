@@ -30,7 +30,7 @@ export function validateStrongPassword(password) {
 
 export const PORTAL_PASSWORD_MIN_LENGTH = 10;
 
-/** Politique pour les comptes portail client : 10 caractères + lettre + chiffre. */
+/** Policy for client portal accounts: 10 characters + letter + digit. */
 const PORTAL_RULES = [
   {
     code: "TOO_SHORT",

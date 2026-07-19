@@ -29,16 +29,14 @@ export async function ensureTicketCommentUpdatedAtSchema() {
     if (!hasColumn) {
       const filePath = path.join(root, MIGRATION_FILE);
       if (!fs.existsSync(filePath)) {
-        console.warn("[ticket-comment-updated-at] Fichier migration introuvable :", MIGRATION_FILE);
+        console.warn("[ticket-comment-updated-at] Migration file not found:", MIGRATION_FILE);
         return;
       }
-      console.log("[ticket-comment-updated-at] Application de la migration…");
       await client.query(fs.readFileSync(filePath, "utf8"));
-      console.log("[ticket-comment-updated-at] Schéma OK");
     }
     ensured = true;
   } catch (err) {
-    console.error("[ticket-comment-updated-at] Erreur migration:", err?.message || err);
+    console.error("[ticket-comment-updated-at] Migration failed:", err?.message || err);
   } finally {
     client.release();
   }

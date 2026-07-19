@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📊 Routes des Métriques Check MK
+// 📊 Check MK metrics routes
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -10,7 +10,7 @@ import { getCheckMKSettings, authenticateCheckMK } from './utils.js';
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 📊 GET /api/checkmk/metrics/:clientId — Récupérer les métriques (min, max, average) pour une période
+// 📊 GET /api/checkmk/metrics/:clientId — Fetch metrics (min, max, average) for a period
 // ───────────────────────────────────────────────
 router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
   try {
@@ -23,10 +23,10 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
       });
     }
     
-    // Si service_description n'est pas fourni, essayer de l'inférer depuis metric
+    // If service_description is not provided, try inferring it from metric
     const serviceDesc = service_description || metric;
     
-    // Récupérer les settings Check MK
+    // Fetch Check MK settings
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({ 
@@ -34,7 +34,7 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
       });
     }
     
-    // Authentifier auprès de Check MK
+    // Authenticate with Check MK
     const authData = await authenticateCheckMK(
       settings.apiUrl,
       settings.username,
@@ -45,7 +45,7 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
     const apiUrl = settings.apiUrl;
     const normalizedApiUrl = apiUrl.replace(/\/+$/, '');
     
-    // Convertir les timestamps ISO en format datetime pour Check MK
+    // Convert ISO timestamps to Check MK datetime format
     const formatDateTime = (isoString) => {
       const date = new Date(isoString);
       const year = date.getFullYear();
@@ -58,26 +58,26 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
       return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${microseconds}`;
     };
     
-    // Récupérer min, max et average en faisant 3 appels avec différents reduce
-    // Utiliser l'endpoint "Get metrics using filters" (endpoint interne)
+    // Fetch min, max, and average with three calls using different reduce modes
+    // Use the "Get metrics using filters" endpoint (internal endpoint)
     const reduceTypes = ['min', 'max', 'average'];
     const results = {};
     
-    // Construire le filtre avec uniquement le hostname
+    // Build filter with only hostname
     const filter = {
       host: {
         host: hostname
       }
     };
     
-    // Ajouter le site si spécifié
+    // Add the site when specified
     if (checkmkSite) {
       filter.siteopt = {
         site: checkmkSite
       };
     }
     
-    // Ajouter le service si spécifié
+    // Add the service when specified
     if (serviceDesc) {
       filter.service = {
         service: serviceDesc
@@ -85,7 +85,7 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
     }
     
     for (const reduceType of reduceTypes) {
-      // Essayer plusieurs endpoints possibles pour l'endpoint interne
+      // Try several possible endpoints for the internal metrics API
       const possibleEndpoints = [
         `${normalizedApiUrl}/cmk/gui/openapi/endpoints/metric/get_graph`,
         `${normalizedApiUrl}/objects/host/${encodeURIComponent(hostname)}/actions/get_graph/invoke`,
@@ -121,7 +121,7 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
           if (response.ok) {
             const data = await response.json();
             
-            // Extraire la valeur depuis les data_points
+            // Extract value from data_points
             if (data.metrics && Array.isArray(data.metrics) && data.metrics.length > 0) {
               const metricData = data.metrics[0];
               if (metricData.data_points && Array.isArray(metricData.data_points) && metricData.data_points.length > 0) {
@@ -146,7 +146,7 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
       }
     }
     
-    // Si aucun résultat, essayer avec les anciens endpoints en fallback
+    // If no results, try legacy endpoints as fallback
     let metricsData = null;
     let lastError = null;
     
@@ -203,7 +203,7 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
       }
     }
     
-    // Si on a des résultats depuis les appels avec reduce, les utiliser
+    // If reduce calls returned results, use them
     if (results.min || results.max || results.average) {
       return res.json({
         hostname,
@@ -214,7 +214,7 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
       });
     }
     
-    // Sinon, essayer d'extraire depuis les données fallback
+    // Otherwise, try extracting from fallback data
     if (!metricsData) {
       return res.json({
         hostname,
@@ -226,7 +226,7 @@ router.get('/metrics/:clientId', verifyJWT, async (req, res) => {
       });
     }
     
-    // Extraire min, max, average depuis les données Check MK (fallback)
+    // Extract min, max, and average from Check MK data (fallback)
     let min = null;
     let max = null;
     let average = null;

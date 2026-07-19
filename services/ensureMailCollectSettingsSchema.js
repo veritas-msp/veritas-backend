@@ -32,16 +32,14 @@ export async function ensureMailCollectSettingsSchema() {
 
     const filePath = path.join(root, MIGRATION_FILE);
     if (!fs.existsSync(filePath)) {
-      console.warn("[mail-collect-settings] Fichier migration introuvable :", MIGRATION_FILE);
+      console.warn("[mail-collect-settings] Migration file not found:", MIGRATION_FILE);
       return;
     }
 
-    console.log("[mail-collect-settings] Application de la migration…");
     await client.query(fs.readFileSync(filePath, "utf8"));
     ensured = true;
-    console.log("[mail-collect-settings] Schéma OK");
   } catch (err) {
-    console.error("[mail-collect-settings] Erreur migration:", err?.message || err);
+    console.error("[mail-collect-settings] Migration failed:", err?.message || err);
   } finally {
     client.release();
   }

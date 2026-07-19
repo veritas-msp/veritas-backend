@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 
 export const DEFAULT_MAILINBLACK_API_URL = 'https://api.mailinblack.com';
 
-/** Racine instance Mailinblack (sans suffixe /admin/api, /protect/api, etc.) */
+/** Root Mailinblack instance URL (without /admin/api, /protect/api, etc. suffix). */
 function normalizeApiUrl(apiUrl) {
   let raw = (apiUrl || DEFAULT_MAILINBLACK_API_URL).trim().replace(/\/+$/, '');
   raw = raw.replace(/\/auth\/api(\/v[\d.]+)?(\/.*)?$/i, '');
@@ -131,7 +131,7 @@ function resolveAuthBaseUrls(apiUrl) {
     if (value && !bases.includes(value)) bases.push(value);
   };
 
-  // L'authentification est centralisée sur api.mailinblack.com
+  // Authentication is centralized on api.mailinblack.com
   add(DEFAULT_MAILINBLACK_API_URL);
 
   const raw = (apiUrl || DEFAULT_MAILINBLACK_API_URL).trim().replace(/\/+$/, '');
@@ -186,8 +186,8 @@ function buildAuthFailureMessage(lastStatus, lastBody, lastUrl = '') {
 }
 
 /**
- * Authentification Mailinblack v2 — auth key (api-keys/execute) ou login email/password.
- * Retourne { token, clientId, userId } pour le header x-auth-token.
+ * Authentication Mailinblack v2 — auth key (api-keys/execute) or login email/password.
+ * Returns { token, clientId, userId } for header x-auth-token.
  */
 export async function mailinblackAuthenticate(credentials = {}) {
   const {
@@ -280,7 +280,7 @@ export async function mailinblackAuthenticate(credentials = {}) {
         lastBody = parsed;
         lastUrl = url;
       } catch {
-        // essai suivant
+        // essai next
       }
     }
   }
@@ -373,7 +373,7 @@ async function safeMailinblackCall(fn) {
   }
 }
 
-/** @deprecated — utilisez mailinblackAuthenticate + mailinblackV2Request */
+/** @deprecated — use mailinblackAuthenticate + mailinblackV2Request */
 export async function mailinblackProtectRequest(apiUrl, apiKey, action, params = {}, method = 'POST') {
   const session = await mailinblackAuthenticate({ apiUrl, authKey: apiKey });
   const path = action.includes('/') ? action : action;

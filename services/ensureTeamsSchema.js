@@ -28,16 +28,14 @@ export async function ensureTeamsSchema() {
 
     const filePath = path.join(root, MIGRATION_FILE);
     if (!fs.existsSync(filePath)) {
-      console.warn("[teams] Migration introuvable:", MIGRATION_FILE);
+      console.warn("[teams] Migration not found:", MIGRATION_FILE);
       return;
     }
 
-    console.log("[teams] Création des tables équipes…");
     await client.query(fs.readFileSync(filePath, "utf8"));
     ensured = true;
-    console.log("[teams] Schéma équipes prêt.");
   } catch (err) {
-    console.error("[teams] Échec migration automatique:", err.message);
+    console.error("[teams] Automatic migration failed:", err.message);
   } finally {
     client.release();
   }

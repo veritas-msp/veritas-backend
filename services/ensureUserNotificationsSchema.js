@@ -29,15 +29,13 @@ async function columnExists(client, tableName, columnName) {
   return result.rows.length > 0;
 }
 
-async function applyMigrationFile(client, relativePath, label) {
+async function applyMigrationFile(client, relativePath) {
   const filePath = path.join(root, relativePath);
   if (!fs.existsSync(filePath)) {
-    console.warn(`[user-notifications] Fichier migration introuvable : ${relativePath}`);
+    console.warn(`[user-notifications] Migration file not found: ${relativePath}`);
     return false;
   }
-  console.log(`[user-notifications] Application de la migration ${label}…`);
   await client.query(fs.readFileSync(filePath, "utf8"));
-  console.log(`[user-notifications] Migration ${label} OK`);
   return true;
 }
 
@@ -49,19 +47,19 @@ export async function ensureUserNotificationsSchema() {
   try {
     const hasTable = await tableExists(client, "v_b_user_notifications");
     if (!hasTable) {
-      await applyMigrationFile(client, MIGRATION_FILE, "table");
+      await applyMigrationFile(client, MIGRATION_FILE);
     }
 
     if (hasTable || (await tableExists(client, "v_b_user_notifications"))) {
       const hasArchiveColumn = await columnExists(client, "v_b_user_notifications", "archived_at");
       if (!hasArchiveColumn) {
-        await applyMigrationFile(client, ARCHIVE_MIGRATION_FILE, "archive");
+        await applyMigrationFile(client, ARCHIVE_MIGRATION_FILE);
       }
     }
 
     ensured = true;
   } catch (err) {
-    console.error("[user-notifications] Erreur migration:", err?.message || err);
+    console.error("[user-notifications] Migration failed:", err?.message || err);
   } finally {
     client.release();
   }

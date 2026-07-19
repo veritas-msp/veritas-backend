@@ -48,7 +48,7 @@ function buildProgress(plan, applied) {
   return { total, completed, remaining: total - completed };
 }
 
-/** Progression de l'installation depuis schema/schema_export.csv (pas les patches SQL). */
+/** Installation progress from schema/schema_export.csv (not SQL patches). */
 export async function getMigrationProgress() {
   if (!isDatabaseConfigured()) {
     throw new Error("Base de données non configurée — complétez l'étape précédente du wizard.");
@@ -78,7 +78,7 @@ export async function getMigrationProgress() {
   }
 }
 
-/** Crée la prochaine table (ou applique les données initiales). */
+/** Creates prochaitab(or applithat data initiales). */
 export async function runNextPendingMigration() {
   if (!isDatabaseConfigured()) {
     throw new Error("Base de données non configurée — complétez l'étape précédente du wizard.");
@@ -158,7 +158,7 @@ export async function runNextPendingMigration() {
   }
 }
 
-/** Installation complète (script CLI / secours). */
+/** Full installation (CLI script / fallback). */
 export async function runPendingMigrations() {
   const executed = [];
   let result;

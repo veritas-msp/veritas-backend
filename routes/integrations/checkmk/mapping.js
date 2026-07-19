@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📍 Routes de Mapping - Lier les équipements Check MK
+// 📍 Mapping routes — link Check MK equipment
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -9,31 +9,31 @@ import verifyJWT from '../../../middleware/auth.js';
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 🔗 GET /api/checkmk/mapping/:clientId — Récupérer les mappings d'un client
+// 🔗 GET /api/checkmk/mapping/:clientId — Fetch mappings for a client
 // ───────────────────────────────────────────────
 router.get('/mapping/:clientId', verifyJWT, async (req, res) => {
   try {
     const { clientId } = req.params;
 
-    // La table v_b_clients_host_mapping n'existe plus dans le nouveau modèle.
-    // On renvoie donc une liste vide de mappings pour éviter les erreurs 500.
-    // Si besoin, cette route pourra être réimplémentée en lisant directement
-    // les colonnes checkmk_* des tables v_b_clients_m_*.
+    // The v_b_clients_host_mapping table no longer exists in the new model.
+    // Return an empty mapping list to avoid 500 errors.
+    // If needed, this route can be reimplemented by reading directly
+    // checkmk_* columns from v_b_clients_m_* tables.
     res.json([]);
   } catch (error) {
-    console.error('❌ Erreur lors du chargement des mappings CheckMK:', error);
+    console.error('Error loading CheckMK mappings:', error);
     res.status(500).json({ error: 'Erreur lors du chargement des mappings', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 📊 GET /api/checkmk/mapping/:clientId/stats — Statistiques des mappings d'un client
+// 📊 GET /api/checkmk/mapping/:clientId/stats — Mapping statistics for a client
 // ───────────────────────────────────────────────
 router.get('/mapping/:clientId/stats', verifyJWT, async (req, res) => {
   try {
     const { clientId } = req.params;
 
-    // Vérifier d'abord si la table existe
+    // First check whether the table exists
     const tableCheck = await pool.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables
@@ -45,7 +45,7 @@ router.get('/mapping/:clientId/stats', verifyJWT, async (req, res) => {
       return res.json({ stats: [], total: 0 });
     }
 
-    // Colonnes CheckMK : checkmk_host_name, checkmk_site, checkmk_service_name (equipment_type n'existe plus)
+    // CheckMK columns: checkmk_host_name, checkmk_site, checkmk_service_name (equipment_type no longer exists)
     const totalResult = await pool.query(
       `SELECT COUNT(*) as total
        FROM v_b_clients_host_mapping
@@ -65,26 +65,26 @@ router.get('/mapping/:clientId/stats', verifyJWT, async (req, res) => {
 
     res.json(response);
   } catch (error) {
-    console.error('❌ Erreur lors du chargement des statistiques CheckMK:', error);
+    console.error('Error loading CheckMK statistics:', error);
     res.status(500).json({ error: 'Erreur lors du chargement des statistiques', details: error.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// ➕ POST /api/checkmk/mapping — Créer ou mettre à jour un mapping
+// ➕ POST /api/checkmk/mapping — Create or update a mapping
 // ───────────────────────────────────────────────
 router.post('/mapping', verifyJWT, async (req, res) => {
   try {
     const { client_id, equipment_type, equipment_id, checkmk_host_name, checkmk_service_name, checkmk_site, is_active } = req.body;
     
-    // Valider les paramètres requis
+    // Validate required fields
     if (!client_id || !equipment_type || !equipment_id || !checkmk_host_name) {
       return res.status(400).json({ 
         error: 'client_id, equipment_type, equipment_id et checkmk_host_name sont requis' 
       });
     }
     
-    // Créer ou mettre à jour le mapping dans la table v_b_clients_host_mapping
+    // Create or update mapping in v_b_clients_host_mapping
     const query = `INSERT INTO v_b_clients_host_mapping 
        (client_id, equipment_type, equipment_id, checkmk_host_name, checkmk_service_name, checkmk_site, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -105,7 +105,7 @@ router.post('/mapping', verifyJWT, async (req, res) => {
     
     res.json(mapping);
   } catch (error) {
-    console.error('Erreur mapping:', error.message, error.detail);
+    console.error('Mapping error:', error.message, error.detail);
     
     res.status(500).json({ 
       error: 'Erreur lors de la création/mise à jour du mapping',
@@ -115,13 +115,13 @@ router.post('/mapping', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /api/checkmk/mapping/:id — Supprimer un mapping
+// 🗑️ DELETE /api/checkmk/mapping/:id — Delete a mapping
 // ───────────────────────────────────────────────
 router.delete('/mapping/:id', verifyJWT, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Récupérer le mapping avant suppression pour pouvoir mettre à jour le périphérique
+    // Fetch mapping before deletion so equipment can be updated
     const mappingResult = await pool.query(
       `SELECT * FROM v_b_clients_host_mapping WHERE id = $1`,
       [id]
@@ -133,15 +133,15 @@ router.delete('/mapping/:id', verifyJWT, async (req, res) => {
     
     const mapping = mappingResult.rows[0];
     
-    // Supprimer le mapping
+    // Delete mapping
     const result = await pool.query(
       `DELETE FROM v_b_clients_host_mapping WHERE id = $1 RETURNING *`,
       [id]
     );
     
-    // Retirer checkmk_host_name du périphérique dans les nouvelles tables
+    // Remove checkmk_host_name from equipment in the new tables
     try {
-      // Mapping des types d'équipements vers les tables correspondantes
+      // Map equipment types to corresponding tables
       const equipmentTypeToTable = {
         'Serveurs': 'v_b_clients_m_servers',
         'Stockage': 'v_b_clients_m_stockage',
@@ -160,7 +160,7 @@ router.delete('/mapping/:id', verifyJWT, async (req, res) => {
         return;
       }
       
-      // Récupérer l'équipement depuis la table correspondante
+      // Fetch equipment from the corresponding table
       const equipmentResult = await pool.query(
         `SELECT id, data FROM ${tableName} 
          WHERE client_id::text = $1 AND (data->>'nom' = $2 OR name = $2 OR item_key = $2)
@@ -172,10 +172,10 @@ router.delete('/mapping/:id', verifyJWT, async (req, res) => {
         const equipment = equipmentResult.rows[0];
         const currentData = equipment.data || {};
         
-        // Retirer checkmk_host_name et checkmk_site
+        // Remove checkmk_host_name and checkmk_site
         const { checkmk_host_name, checkmk_site, ...dataWithoutCheckMK } = currentData;
         
-        // Sauvegarder dans la table correspondante
+        // Save back to the corresponding table
         await pool.query(
           `UPDATE ${tableName} SET data = $1, updated_at = NOW() WHERE id = $2`,
           [dataWithoutCheckMK, equipment.id]
@@ -186,7 +186,7 @@ router.delete('/mapping/:id', verifyJWT, async (req, res) => {
         
       }
     } catch (updateError) {
-      // Ne pas faire échouer la requête si la mise à jour échoue
+      // Do not fail the request if the update fails
       
     }
     

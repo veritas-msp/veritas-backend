@@ -31,7 +31,7 @@ router.get("/preferences", async (req, res) => {
     const payload = await getUserInAppPreferencesPayload(req.user.id);
     res.json(payload);
   } catch (err) {
-    console.error("Erreur GET /notifications/preferences:", err);
+    console.error("GET /notifications/preferences:", err);
     res.status(500).json({ error: "Erreur lors de la récupération des préférences" });
   }
 });
@@ -52,7 +52,7 @@ router.put(
         ...payload,
       });
     } catch (err) {
-      console.error("Erreur PUT /notifications/preferences:", err);
+      console.error("PUT /notifications/preferences:", err);
       res.status(500).json({ error: "Erreur lors de la sauvegarde des préférences" });
     }
   }
@@ -89,7 +89,7 @@ router.get(
       });
       res.json(payload);
     } catch (err) {
-      console.error("Erreur GET /notifications:", err);
+      console.error("GET /notifications:", err);
       res.status(500).json({ error: "Erreur lors de la récupération des notifications" });
     }
   }
@@ -100,7 +100,7 @@ router.get("/unread-count", async (req, res) => {
     const count = await getUnreadNotificationCount(req.user.id);
     res.json({ count });
   } catch (err) {
-    console.error("Erreur GET /notifications/unread-count:", err);
+    console.error("GET /notifications/unread-count:", err);
     res.status(500).json({ error: "Erreur lors du comptage des notifications" });
   }
 });
@@ -119,7 +119,7 @@ router.patch(
       }
       res.json(updated);
     } catch (err) {
-      console.error("Erreur PATCH /notifications/:id/read:", err);
+      console.error("PATCH /notifications/:id/read:", err);
       res.status(500).json({ error: "Erreur lors de la mise à jour de la notification" });
     }
   }
@@ -139,7 +139,7 @@ router.patch(
       }
       res.json(updated);
     } catch (err) {
-      console.error("Erreur PATCH /notifications/:id/archive:", err);
+      console.error("PATCH /notifications/:id/archive:", err);
       res.status(500).json({ error: "Erreur lors de l'archivage de la notification" });
     }
   }
@@ -162,7 +162,7 @@ router.post(
         notification,
       });
     } catch (err) {
-      console.error("Erreur POST /notifications/test:", err);
+      console.error("POST /notifications/test:", err);
       res.status(500).json({ error: "Impossible d'envoyer la notification test." });
     }
   }
@@ -181,7 +181,7 @@ router.post(
       });
       res.json({ success: true, count });
     } catch (err) {
-      console.error("Erreur POST /notifications/read-all:", err);
+      console.error("POST /notifications/read-all:", err);
       res.status(500).json({ error: "Erreur lors du marquage des notifications" });
     }
   }
@@ -200,7 +200,7 @@ router.post(
       });
       res.json({ success: true, count });
     } catch (err) {
-      console.error("Erreur POST /notifications/archive-all:", err);
+      console.error("POST /notifications/archive-all:", err);
       res.status(500).json({ error: "Erreur lors de l'archivage des notifications" });
     }
   }

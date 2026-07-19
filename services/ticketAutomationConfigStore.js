@@ -349,7 +349,7 @@ export async function saveTicketAutomationRawConfig(config = {}) {
     ),
   ]);
 
-  // Les sous-configurations annexes ne doivent pas bloquer la sauvegarde Ticket.
+  // Optional sub-configurations must not block Ticket backup.
   const optionalSaveResults = await Promise.allSettled([
     writeJsonTable(TABLES.notificationEvents, eventConfig && typeof eventConfig === "object" ? eventConfig : {}),
     writeJsonTable(TABLES.notificationWebhooks, Array.isArray(webhooks) ? webhooks : []),

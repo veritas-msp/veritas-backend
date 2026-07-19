@@ -60,7 +60,7 @@ async function upsertGeneralSetting(client, key, value) {
   );
 }
 
-// GET /api/general-settings — Préférences globales (lecture publique)
+// GET /api/general-settings — Global preferences (public read)
 router.get("/", async (_req, res) => {
   try {
     const settings = await readGeneralSettingsFromDb();
@@ -71,7 +71,7 @@ router.get("/", async (_req, res) => {
   }
 });
 
-// PATCH /api/general-settings — Mise à jour (admin uniquement)
+// PATCH /api/general-settings — Update (admin only)
 router.patch("/", verifyJWT, requireRole("admin"), async (req, res) => {
   const existing = await readGeneralSettingsFromDb();
   const normalized = normalizeGeneralSettings({ ...existing, ...req.body });

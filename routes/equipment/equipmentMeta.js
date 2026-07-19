@@ -1,6 +1,7 @@
 import express from "express";
 import { pool } from "../../database/db.js";
 import verifyJWT from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/permissions.js";
 import { loadEquipmentActivity } from "../../services/equipmentActivityService.js";
 
 const router = express.Router();
@@ -49,7 +50,7 @@ function parseClientIds(raw) {
   return [...new Set(ids)];
 }
 
-router.get("/tags/batch", async (req, res) => {
+router.get("/tags/batch", requirePermission("infrastructure.view"), async (req, res) => {
   try {
     const clientIds = parseClientIds(req.query.clientIds);
     if (!clientIds.length) return res.json([]);
@@ -74,7 +75,7 @@ router.get("/tags/batch", async (req, res) => {
   }
 });
 
-router.get("/:equipmentId/activity", async (req, res) => {
+router.get("/:equipmentId/activity", requirePermission("infrastructure.view"), async (req, res) => {
   try {
     const equipmentId = parseEquipmentId(req.params.equipmentId);
     if (!equipmentId) return res.status(400).json({ error: "ID périphérique invalide" });
@@ -98,7 +99,7 @@ router.get("/:equipmentId/activity", async (req, res) => {
   }
 });
 
-router.get("/:equipmentId/tags", async (req, res) => {
+router.get("/:equipmentId/tags", requirePermission("infrastructure.view"), async (req, res) => {
   try {
     const equipmentId = parseEquipmentId(req.params.equipmentId);
     if (!equipmentId) return res.status(400).json({ error: "ID périphérique invalide" });
@@ -122,7 +123,7 @@ router.get("/:equipmentId/tags", async (req, res) => {
   }
 });
 
-router.post("/:equipmentId/tags", async (req, res) => {
+router.post("/:equipmentId/tags", requirePermission("infrastructure.edit"), async (req, res) => {
   try {
     const equipmentId = parseEquipmentId(req.params.equipmentId);
     if (!equipmentId) return res.status(400).json({ error: "ID périphérique invalide" });
@@ -166,7 +167,7 @@ router.post("/:equipmentId/tags", async (req, res) => {
   }
 });
 
-router.delete("/:equipmentId/tags/:tagId", async (req, res) => {
+router.delete("/:equipmentId/tags/:tagId", requirePermission("infrastructure.edit"), async (req, res) => {
   try {
     const equipmentId = parseEquipmentId(req.params.equipmentId);
     if (!equipmentId) return res.status(400).json({ error: "ID périphérique invalide" });

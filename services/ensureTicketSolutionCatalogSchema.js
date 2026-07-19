@@ -116,20 +116,17 @@ export async function ensureTicketSolutionCatalogSchema() {
   try {
     const migrationPath = path.join(root, MIGRATION_FILE);
     if (!fs.existsSync(migrationPath)) {
-      console.warn(`[ticket-solution-catalog] Migration introuvable : ${MIGRATION_FILE}`);
+      console.warn(`[ticket-solution-catalog] Migration not found: ${MIGRATION_FILE}`);
       return schema;
     }
 
-    console.log("[ticket-solution-catalog] Schéma incomplet — application de la migration…");
     await client.query(fs.readFileSync(migrationPath, "utf8"));
     await seedSolutionCatalogIfEmpty(client);
     schemaCache = null;
     ensured = true;
-    const next = await resolveTicketSolutionCatalogSchema();
-    console.log("[ticket-solution-catalog] Schéma prêt.");
-    return next;
+    return await resolveTicketSolutionCatalogSchema();
   } catch (err) {
-    console.error("[ticket-solution-catalog] Échec migration:", err.message);
+    console.error("[ticket-solution-catalog] Migration failed:", err.message);
     return schema;
   } finally {
     client.release();

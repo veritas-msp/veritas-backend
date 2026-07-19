@@ -31,7 +31,7 @@ const ALLOWED_USER_ROLES = ["admin", "superviseur", "utilisateur"];
 const TICKET_HELPDESK_DISPLAY_NAME_KEY = "ticket_helpdesk_display_name";
 const TICKET_CHAT_UI_SETTINGS_KEY = "ticket_chat_ui_settings";
 
-/** Comptes portail client (role client) — exclus des listes agents / internes */
+/** Client portal accounts (client role) — excluded from agent/internal lists */
 const AGENTS_LIST_WHERE = `WHERE COALESCE(role, '') <> 'client'`;
 
 const HELPDESK_DISPLAY_JOIN = `
@@ -121,7 +121,7 @@ function attachUserProfileSettings(row) {
 }
 
 // ───────────────────────────────────────────────
-// 🙋‍♂️ GET /me — Infos utilisateur connecté
+// 🙋‍♂️ GET /me — Current user info
 // ───────────────────────────────────────────────
 router.get("/me", verifyJWT, async (req, res) => {
   try {
@@ -226,7 +226,7 @@ router.delete("/me/avatar", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 👥 GET /active — Utilisateurs actifs (tous rôles, pour sélection dans l'app)
+// 👥 GET /active — Active users (all roles, for in-app selection)
 // ───────────────────────────────────────────────
 router.get("/active", verifyJWT, async (req, res) => {
   try {
@@ -248,7 +248,7 @@ router.get("/active", verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 👥 GET / — Tous les utilisateurs (admin uniquement)
+// 👥 GET / — All users (admin only)
 // ───────────────────────────────────────────────
 router.get("/", verifyJWT, requireRole("admin"), async (req, res) => {
   try {
@@ -273,7 +273,7 @@ router.get("/", verifyJWT, requireRole("admin"), async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🛠️ PATCH /:id — Modifier le rôle ou le profil
+// 🛠️ PATCH /:id — Update role or profile
 // ───────────────────────────────────────────────
 router.patch(
   "/:id",
@@ -339,7 +339,7 @@ router.patch(
 );
 
 // ───────────────────────────────────────────────
-// 🔑 PATCH /:id/password — Réinitialiser mot de passe
+// 🔑 PATCH /:id/password — Reset password
 // ───────────────────────────────────────────────
 router.patch(
   "/:id/password",
@@ -370,7 +370,7 @@ router.patch(
 );
 
 // ───────────────────────────────────────────────
-// ➕ POST / — Créer un utilisateur (admin uniquement)
+// ➕ POST / — Create a user (admin only)
 // ───────────────────────────────────────────────
 router.post(
   "/",
@@ -387,7 +387,7 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { email, password, username, is_active } = req.body;
+    const { email, password, username, is_active, profile } = req.body;
 
     try {
       const willBeActive = is_active === undefined ? true : is_active;
@@ -395,10 +395,22 @@ router.post(
         await assertMspAgentLimit(1);
       }
       const hash = await bcrypt.hash(password, 10);
+      const profileName =
+        profile && String(profile).trim()
+          ? String(profile).trim()
+          : DEFAULT_USER_PROFILE;
+      // MSP application role (distinct from Read/Agent/… profile) — required for post-login navigation
       const result = await pool.query(
-        `INSERT INTO v_b_users (id, email, username, profile, password_hash, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [randomUUID(), email, username || null, DEFAULT_USER_PROFILE, hash, is_active === undefined ? true : is_active]
+        `INSERT INTO v_b_users (id, email, username, profile, password_hash, is_active, role)
+         VALUES ($1, $2, $3, $4, $5, $6, 'utilisateur') RETURNING id`,
+        [
+          randomUUID(),
+          email,
+          username || null,
+          profileName,
+          hash,
+          is_active === undefined ? true : is_active,
+        ]
       );
 
       res.status(201).json({ id: result.rows[0].id });
@@ -412,7 +424,7 @@ router.post(
 );
 
 // ───────────────────────────────────────────────
-// ❌ DELETE /:id — Supprimer un utilisateur (admin uniquement)
+// ❌ DELETE /:id — Delete a user (admin only)
 // ───────────────────────────────────────────────
 router.delete("/:id", verifyJWT, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
@@ -446,7 +458,7 @@ router.delete("/:id", verifyJWT, requireRole("admin"), async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🧑 GET /:id — Détails utilisateur (admin uniquement)
+// 🧑 GET /:id — User details (admin only)
 // ───────────────────────────────────────────────
 router.get("/:id", verifyJWT, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
@@ -470,7 +482,7 @@ router.get("/:id", verifyJWT, requireRole("admin"), async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// ✏️ PATCH /:id/username — Modifier le username
+// ✏️ PATCH /:id/username — Update username
 // ───────────────────────────────────────────────
 router.patch(
   "/:id/username",
@@ -500,7 +512,7 @@ router.patch(
 );
 
 // ───────────────────────────────────────────────
-// 🔓 DELETE /:id/mfa — Réinitialiser la MFA (admin uniquement)
+// 🔓 DELETE /:id/mfa — Reset MFA (admin only)
 // ───────────────────────────────────────────────
 router.delete("/:id/mfa", verifyJWT, requireRole("admin"), [param("id").isUUID()], async (req, res) => {
   const errors = validationResult(req);
@@ -538,7 +550,7 @@ router.delete("/:id/mfa", verifyJWT, requireRole("admin"), [param("id").isUUID()
 });
 
 // ───────────────────────────────────────────────
-// 📧 PATCH /:id/email — Modifier l'email
+// 📧 PATCH /:id/email — Update email
 // ───────────────────────────────────────────────
 router.patch(
   "/:id/email",

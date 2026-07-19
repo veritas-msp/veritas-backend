@@ -29,16 +29,14 @@ export async function ensureTicketMajorIncidentSchema() {
     if (!hasColumn) {
       const filePath = path.join(root, MIGRATION_FILE);
       if (!fs.existsSync(filePath)) {
-        console.warn("[ticket-major-incident] Fichier migration introuvable :", MIGRATION_FILE);
+        console.warn("[ticket-major-incident] Migration file not found:", MIGRATION_FILE);
         return;
       }
-      console.log("[ticket-major-incident] Application de la migration…");
       await client.query(fs.readFileSync(filePath, "utf8"));
-      console.log("[ticket-major-incident] Schéma OK");
     }
     ensured = true;
   } catch (err) {
-    console.error("[ticket-major-incident] Échec migration :", err.message);
+    console.error("[ticket-major-incident] Migration failed:", err.message);
   } finally {
     client.release();
   }

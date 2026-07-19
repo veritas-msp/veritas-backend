@@ -267,7 +267,7 @@ router.get(
       });
       return res.json(rows);
     } catch (err) {
-      console.error("Erreur chargement formulaires ventes:", err);
+      console.error("Failed to load sales forms:", err);
       return res.status(500).json({ error: "Erreur lors du chargement des formulaires ventes" });
     }
   }
@@ -286,7 +286,7 @@ router.get("/:formId", verifyJWT, [param("formId").isString().notEmpty()], async
     });
     return res.json(form);
   } catch (err) {
-    console.error("Erreur chargement formulaire vente:", err);
+    console.error("Failed to load sales form:", err);
     return res.status(500).json({ error: "Erreur lors du chargement du formulaire" });
   }
 });
@@ -345,7 +345,7 @@ router.post(
       if (String(err?.code) === "23505") {
         return res.status(409).json({ error: "Un formulaire avec cette clé ou catégorie existe déjà" });
       }
-      console.error("Erreur création formulaire vente:", err);
+      console.error("Failed to create sales form:", err);
       return res.status(500).json({ error: "Erreur lors de la création du formulaire" });
     }
   }
@@ -454,7 +454,7 @@ router.put(
       if (String(err?.code) === "23505") {
         return res.status(409).json({ error: "Conflit de clé ou catégorie" });
       }
-      console.error("Erreur modification formulaire vente:", err);
+      console.error("Failed to update sales form:", err);
       return res.status(500).json({ error: "Erreur lors de la modification du formulaire" });
     }
   }
@@ -470,7 +470,7 @@ router.delete("/:formId", verifyJWT, [param("formId").isString().notEmpty()], as
     if (result.rowCount === 0) return res.status(404).json({ error: "Formulaire introuvable" });
     return res.json({ success: true });
   } catch (err) {
-    console.error("Erreur suppression formulaire vente:", err);
+    console.error("Failed to delete sales form:", err);
     return res.status(500).json({ error: "Erreur lors de la suppression du formulaire" });
   }
 });
@@ -534,7 +534,7 @@ router.post(
       if (String(err?.code) === "23505") {
         return res.status(409).json({ error: "Un champ avec cette clé existe déjà sur ce formulaire" });
       }
-      console.error("Erreur création champ formulaire vente:", err);
+      console.error("Failed to create champ sales form:", err);
       return res.status(500).json({ error: "Erreur lors de la création du champ" });
     }
   }
@@ -606,7 +606,7 @@ router.put(
       if (!result.rows.length) return res.status(404).json({ error: "Champ introuvable" });
       return res.json(mapFieldRow(result.rows[0]));
     } catch (err) {
-      console.error("Erreur modification champ formulaire vente:", err);
+      console.error("Failed to update champ sales form:", err);
       return res.status(500).json({ error: "Erreur lors de la modification du champ" });
     }
   }
@@ -628,7 +628,7 @@ router.delete(
       if (result.rowCount === 0) return res.status(404).json({ error: "Champ introuvable" });
       return res.json({ success: true });
     } catch (err) {
-      console.error("Erreur suppression champ formulaire vente:", err);
+      console.error("Failed to delete champ sales form:", err);
       return res.status(500).json({ error: "Erreur lors de la suppression du champ" });
     }
   }

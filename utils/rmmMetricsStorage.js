@@ -1,6 +1,6 @@
 import { pool } from "../database/db.js";
 
-/** Taille moyenne estimée par ligne (données + index), en octets. */
+/** Estimated average row size (data + indexes), in bytes. */
 export const RMM_METRICS_BYTES_PER_ROW = 72;
 
 export function countMetricSeriesPerAgentDay(collectors = {}, avgDisksPerAgent = 3) {
@@ -15,8 +15,8 @@ export function countMetricSeriesPerAgentDay(collectors = {}, avgDisksPerAgent =
 }
 
 /**
- * Estime la volumétrie à régime permanent (agrégation journalière).
- * La fréquence d'échantillonnage n'augmente pas le nombre de lignes — elle affine min/max du jour.
+ * Estimates steady-state storage volume (daily aggregation).
+ * Sampling frequency does not increase row count — it refines the day's min/max.
  */
 export function estimateRmmMetricsStorage({
   agentCount = 0,

@@ -1,9 +1,9 @@
-// Middleware pour vérifier le mode maintenance
-// Mode informatif uniquement : affiche un message sur la page de login, ne bloque pas l'application
-// Le statut de maintenance est récupéré via l'endpoint /api/maintenance/status qui est accessible publiquement
+// Middleware to check maintenance mode
+// Informational mode only: shows a message on the login page, does not block the application
+// Maintenance status is fetched via the public /api/maintenance/status endpoint
 export async function checkMaintenanceMode(req, res, next) {
-  // Le mode maintenance est maintenant uniquement informatif
-  // Il n'y a plus de blocage des requêtes - le message s'affiche uniquement sur la page de login
+  // Maintenance mode is now informational only
+  // Requests are no longer blocked — the message appears only on the login page
   next();
 }
 

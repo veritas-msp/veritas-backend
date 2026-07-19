@@ -1,15 +1,15 @@
 // ───────────────────────────────────────────────
 // 🔄 Sync CheckMK → v_b_clients_m_save (last_backup_date, last_backup_duration)
 //
-// Données récupérables via l’API CheckMK pour un service (ex. job de sauvegarde) :
+// Data available from the CheckMK API for a service (e.g. backup job):
 // - host_name, description, display_name
 // - state (0=OK, 1=WARN, 2=CRIT, 3=UNKNOWN), state_type (hard/soft)
-// - plugin_output, long_plugin_output (texte libre du plugin)
-// - perf_data / performance_data (métriques type "key=value" ou "key=value;warn;crit")
-// - last_check (timestamp dernier check), last_state_change
+// - plugin_output, long_plugin_output (free-text plugin output)
+// - perf_data / performance_data (metrics type "key=value" or "key=value;warn;crit")
+// - last_check (timestamp last check), last_state_change
 // - check_command, labels
-// La durée de backup peut être dans plugin_output (Creation time / End time, ou "Duration: …")
-// ou dans perf_data (duration=..., backup_duration=..., en secondes).
+// Backup duration may be in plugin_output (Creation time / End time, or "Duration: …")
+// or in perf_data (duration=..., backup_duration=..., in seconds).
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -24,10 +24,10 @@ const SETTINGS_TABLE = 'v_b_settings';
 const LAST_SYNC_SECTION = 'checkmk';
 const LAST_SYNC_KEY = 'checkmk_save_jobs_last_sync';
 
-/** Date de dernière synchro (manuelle ou cron), ISO string ou null — mémoire + persistance en base */
+/** Last sync date (manual or cron), ISO string or null — in-memory plus database persistence */
 let lastSaveJobsSyncAt = null;
 
-/** Charge la date de dernière synchro depuis la base (au démarrage ou si mémoire vide) */
+/** Load the last sync date from the database (on startup or when memory is empty) */
 async function loadLastSyncFromDb() {
   try {
     const r = await pool.query(
@@ -36,11 +36,11 @@ async function loadLastSyncFromDb() {
     );
     if (r.rows[0]?.value) lastSaveJobsSyncAt = r.rows[0].value;
   } catch (_) {
-    // Table ou colonne absente : ignorer
+    // Missing table/column: ignore
   }
 }
 
-/** Enregistre la date de dernière synchro en base */
+/** Save the last sync date to the database */
 async function saveLastSyncToDb(isoDate) {
   try {
     const r = await pool.query(
@@ -59,9 +59,9 @@ async function saveLastSyncToDb(isoDate) {
 }
 
 /**
- * Appel direct à l'endpoint "show service" CheckMK pour récupérer plugin_output (Summary/Details)
- * quand la liste des services ne le fournit pas.
- * serviceDescription = partie après "host:" ou le nom du service (ex. "VEEAM Job Backup_LSVDP-DCVMS01")
+ * Direct call to the CheckMK "show service" endpoint to fetch plugin_output (Summary/Details)
+ * when the service list does not provide it.
+ * serviceDescription = part after "host:" or service name (e.g. "VEEAM Job Backup_LSVDP-DCVMS01")
  */
 async function fetchShowService(apiUrl, authHeader, hostName, serviceDescription, site) {
   const showUrl = new URL(`${apiUrl}/objects/host/${encodeURIComponent(hostName)}/actions/show_service/invoke`);
@@ -182,8 +182,8 @@ function parseDurationFromPluginOutput(pluginOutput) {
 }
 
 /**
- * Parse Creation time (début de la sauvegarde) depuis plugin_output.
- * Format Veeam: "Creation time: DD.MM.YYYY HH:mm:ss". Retourne ISO ou null.
+ * Parse Creation time (backup start) from plugin_output.
+ * Format Veeam: "Creation time: DD.MM.YYYY HH:mm:ss". Returns ISO or null.
  */
 function parseCreationTimeFromPluginOutput(pluginOutput) {
   if (!pluginOutput || typeof pluginOutput !== 'string') return null;
@@ -225,8 +225,8 @@ function toLastBackupDate(lastCheck) {
 }
 
 // ───────────────────────────────────────────────
-// runSaveJobsSync — Logique de sync réutilisable (route + cron)
-// Retourne { message, updated, total }. Lance en cas d'erreur bloquante.
+// runSaveJobsSync — Reusable sync logic (route + cron)
+// Returns { message, updated, total }. Throws on blocking errors.
 // ───────────────────────────────────────────────
 export async function runSaveJobsSync({ clientId } = {}) {
   const columnsResult = await pool.query(
@@ -338,10 +338,10 @@ export async function runSaveJobsSync({ clientId } = {}) {
         const snippet = viewPyData
           ? (viewPyData.longPluginOutput || viewPyData.pluginOutput || viewPyData.performanceData || '').toString().slice(0, 200)
           : '(view.py sans donnée)';
-        console.warn(`[checkmk save-jobs sync] Durée non trouvée pour job id=${job.id} (${serviceName}), host=${hostName}. Aperçu: ${snippet}`);
+        console.warn(`[checkmk save-jobs sync] Duration not found for job id=${job.id} (${serviceName}), host=${hostName}. Aperçu: ${snippet}`);
       }
 
-      // Récupérer le plugin output via view.py si on ne l'a pas encore (pour last_backup_start = Creation time)
+      // Fetch plugin output via view.py when still missing (for last_backup_start = Creation time)
       if (!pluginOutputForCreation && hasLastBackupStart) {
         const serviceNameForView = (serviceName || '').trim().startsWith(`${hostName}:`)
           ? (serviceName || '').trim().substring(hostName.length + 1).trim()
@@ -392,7 +392,7 @@ export async function runSaveJobsSync({ clientId } = {}) {
 }
 
 // ───────────────────────────────────────────────
-// GET /api/checkmk/save-jobs/last-sync — Date de dernière synchro (manuelle ou cron)
+// GET /api/checkmk/save-jobs/last-sync — Last sync date (manual or cron)
 // ───────────────────────────────────────────────
 router.get('/save-jobs/last-sync', verifyJWT, async (req, res) => {
   if (lastSaveJobsSyncAt == null) await loadLastSyncFromDb();
@@ -400,7 +400,7 @@ router.get('/save-jobs/last-sync', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// POST /api/checkmk/save-jobs/sync — Synchroniser durée et date dernière sauvegarde depuis CheckMK
+// POST /api/checkmk/save-jobs/sync — Sync last backup duration and date from CheckMK
 // ───────────────────────────────────────────────
 router.post('/save-jobs/sync', verifyJWT, async (req, res) => {
   try {
@@ -408,7 +408,7 @@ router.post('/save-jobs/sync', verifyJWT, async (req, res) => {
     const result = await runSaveJobsSync({ clientId });
     res.json(result);
   } catch (err) {
-    console.error('Erreur POST /checkmk/save-jobs/sync:', err);
+    console.error('POST /checkmk/save-jobs/sync:', err);
     const msg = err.message || 'Erreur lors de la synchronisation des jobs.';
     if (err.message?.includes('Colonnes')) return res.status(501).json({ error: msg });
     if (err.message?.includes('Configuration')) return res.status(500).json({ error: msg });

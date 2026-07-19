@@ -3,7 +3,9 @@ import { resolveEquipmentFamilyKey } from "./equipmentMonitoringAlerts.js";
 
 const SINGLETON_ID = 1;
 
-/** Critères d'alerte disponibles par famille d'équipement. */
+const SEVERITIES = new Set(["low", "normal", "high", "urgent"]);
+
+/** Available alert criteria by equipment family. */
 export const SUPERVISION_ALERT_CRITERIA = [
   {
     key: "monitor_critical",
@@ -11,6 +13,8 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "État critique remonté par CheckMK ou la supervision.",
     families: ["servers", "stockage", "firewall", "switch", "wifi", "routeur", "internet", "toip", "alimentation"],
     defaultEnabled: true,
+    defaultSeverity: "high",
+    parameters: [],
   },
   {
     key: "monitor_warning",
@@ -18,13 +22,28 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Avertissement remonté par CheckMK ou la supervision.",
     families: ["servers", "stockage", "firewall", "switch", "wifi", "routeur", "internet", "toip", "alimentation"],
     defaultEnabled: true,
+    defaultSeverity: "normal",
+    parameters: [],
   },
   {
     key: "agent_offline",
     label: "Agent RMM hors ligne",
-    description: "Poste géré par l'agent RMM sans signe de vie récent.",
+    description:
+      "Poste géré par l'agent RMM sans inventaire depuis le seuil d'alerte (distinct du statut online agent RMM).",
     families: ["ordinateurs"],
-    defaultEnabled: false,
+    defaultEnabled: true,
+    defaultSeverity: "high",
+    parameters: [
+      {
+        key: "minutes",
+        type: "number",
+        label: "Seuil hors ligne alerte (minutes)",
+        min: 15,
+        max: 43200,
+        default: 2880,
+        unit: "min",
+      },
+    ],
   },
   {
     key: "updates_pending",
@@ -32,27 +51,64 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Mises à jour Windows en attente sur un poste RMM.",
     families: ["ordinateurs"],
     defaultEnabled: true,
+    defaultSeverity: "normal",
+    parameters: [
+      {
+        key: "minPending",
+        type: "number",
+        label: "Nombre mini. de MAJ en attente",
+        min: 1,
+        max: 500,
+        default: 1,
+      },
+    ],
   },
   {
     key: "disk_critical",
-    label: "Disque critique (≥ 90 %)",
+    label: "Disque critique",
     description: "Espace disque critique sur un poste RMM.",
     families: ["ordinateurs"],
     defaultEnabled: true,
+    defaultSeverity: "urgent",
+    parameters: [
+      {
+        key: "percent",
+        type: "number",
+        label: "Seuil critique (%)",
+        min: 1,
+        max: 100,
+        default: 90,
+        unit: "%",
+      },
+    ],
   },
   {
     key: "disk_warn",
-    label: "Disque à surveiller (≥ 80 %)",
+    label: "Disque à surveiller",
     description: "Espace disque élevé sur un poste RMM.",
     families: ["ordinateurs"],
     defaultEnabled: true,
+    defaultSeverity: "normal",
+    parameters: [
+      {
+        key: "percent",
+        type: "number",
+        label: "Seuil warning (%)",
+        min: 1,
+        max: 100,
+        default: 80,
+        unit: "%",
+      },
+    ],
   },
   {
     key: "unmapped",
     label: "Non mappé CheckMK",
-    description: "Périphérique éligible à CheckMK sans mapping configuré.",
+    description: "Périphérique éligible à CheckMK sans mapping configuré (alerte de couverture).",
     families: ["servers", "stockage", "firewall", "switch", "wifi", "routeur", "internet", "toip"],
     defaultEnabled: true,
+    defaultSeverity: "normal",
+    parameters: [],
   },
   {
     key: "no_data",
@@ -60,6 +116,8 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Périphérique mappé CheckMK mais sans données récentes.",
     families: ["servers", "stockage", "firewall", "switch", "wifi", "routeur", "internet", "toip"],
     defaultEnabled: false,
+    defaultSeverity: "normal",
+    parameters: [],
   },
   {
     key: "warranty_expired",
@@ -67,13 +125,27 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Date de fin de garantie dépassée.",
     families: ["servers", "stockage", "firewall"],
     defaultEnabled: true,
+    defaultSeverity: "normal",
+    parameters: [],
   },
   {
     key: "warranty_soon",
     label: "Garantie expire bientôt",
-    description: "Fin de garantie dans les prochains mois.",
+    description: "Fin de garantie dans les prochains jours (seuil configurable).",
     families: ["servers", "stockage", "firewall"],
     defaultEnabled: true,
+    defaultSeverity: "low",
+    parameters: [
+      {
+        key: "days",
+        type: "number",
+        label: "Jours avant expiration",
+        min: 1,
+        max: 365,
+        default: 30,
+        unit: "j",
+      },
+    ],
   },
   {
     key: "maintenance_expired",
@@ -81,6 +153,8 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Contrat de maintenance firewall expiré.",
     families: ["firewall"],
     defaultEnabled: true,
+    defaultSeverity: "high",
+    parameters: [],
   },
   {
     key: "maintenance_soon",
@@ -88,6 +162,18 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Contrat de maintenance firewall à renouveler.",
     families: ["firewall"],
     defaultEnabled: true,
+    defaultSeverity: "normal",
+    parameters: [
+      {
+        key: "days",
+        type: "number",
+        label: "Jours avant expiration",
+        min: 1,
+        max: 365,
+        default: 30,
+        unit: "j",
+      },
+    ],
   },
   {
     key: "battery_expired",
@@ -95,6 +181,8 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Onduleur / batterie hors service.",
     families: ["alimentation"],
     defaultEnabled: true,
+    defaultSeverity: "high",
+    parameters: [],
   },
   {
     key: "battery_soon",
@@ -102,6 +190,18 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Date batterie onduleur proche.",
     families: ["alimentation"],
     defaultEnabled: true,
+    defaultSeverity: "normal",
+    parameters: [
+      {
+        key: "days",
+        type: "number",
+        label: "Jours avant expiration",
+        min: 1,
+        max: 365,
+        default: 30,
+        unit: "j",
+      },
+    ],
   },
   {
     key: "missing_ip",
@@ -109,6 +209,8 @@ export const SUPERVISION_ALERT_CRITERIA = [
     description: "Adresse IP manquante sur un équipement réseau.",
     families: ["servers", "firewall", "switch", "wifi", "routeur", "toip"],
     defaultEnabled: false,
+    defaultSeverity: "low",
+    parameters: [],
   },
 ];
 
@@ -132,12 +234,76 @@ export function getCriteriaForFamily(familyKey) {
   return SUPERVISION_ALERT_CRITERIA.filter((c) => c.families.includes(key));
 }
 
+function defaultParametersForCriterion(meta) {
+  const params = {};
+  for (const field of meta?.parameters || []) {
+    params[field.key] = field.default;
+  }
+  return params;
+}
+
+export function buildDefaultRuleValue(criterionKeyOrMeta) {
+  const meta =
+    typeof criterionKeyOrMeta === "string"
+      ? criteriaByKey.get(criterionKeyOrMeta)
+      : criterionKeyOrMeta;
+  if (!meta) {
+    return { enabled: true, parameters: {}, severity: "normal" };
+  }
+  return {
+    enabled: Boolean(meta.defaultEnabled),
+    parameters: defaultParametersForCriterion(meta),
+    severity: SEVERITIES.has(meta.defaultSeverity) ? meta.defaultSeverity : "normal",
+  };
+}
+
+function clampNumber(value, field) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return field.default;
+  let out = n;
+  if (field.min != null) out = Math.max(field.min, out);
+  if (field.max != null) out = Math.min(field.max, out);
+  return Math.round(out);
+}
+
+export function normalizeRuleValue(raw, criterionKey) {
+  const meta = criteriaByKey.get(criterionKey);
+  const defaults = buildDefaultRuleValue(meta || criterionKey);
+
+  if (typeof raw === "boolean") {
+    return { ...defaults, enabled: raw };
+  }
+
+  if (!raw || typeof raw !== "object") {
+    return defaults;
+  }
+
+  const parameters = { ...defaults.parameters };
+  for (const field of meta?.parameters || []) {
+    if (raw.parameters?.[field.key] != null) {
+      parameters[field.key] = clampNumber(raw.parameters[field.key], field);
+    } else if (raw[field.key] != null) {
+      parameters[field.key] = clampNumber(raw[field.key], field);
+    }
+  }
+
+  const severity = SEVERITIES.has(String(raw.severity || "").toLowerCase())
+    ? String(raw.severity).toLowerCase()
+    : defaults.severity;
+
+  return {
+    enabled: raw.enabled !== undefined ? Boolean(raw.enabled) : defaults.enabled,
+    parameters,
+    severity,
+  };
+}
+
 export function buildDefaultSupervisionAlertRules() {
   const rules = {};
   for (const family of SUPERVISION_FAMILIES) {
     rules[family.key] = {};
     for (const criterion of getCriteriaForFamily(family.key)) {
-      rules[family.key][criterion.key] = criterion.defaultEnabled;
+      rules[family.key][criterion.key] = buildDefaultRuleValue(criterion);
     }
   }
   return rules;
@@ -146,16 +312,72 @@ export function buildDefaultSupervisionAlertRules() {
 function mergeStoredRules(stored) {
   const defaults = buildDefaultSupervisionAlertRules();
   const input = stored && typeof stored === "object" ? stored : {};
-  const merged = { ...defaults };
+  const merged = {};
 
-  for (const [familyKey, familyRules] of Object.entries(input)) {
-    if (!merged[familyKey] || typeof familyRules !== "object") continue;
-    for (const [criterionKey, enabled] of Object.entries(familyRules)) {
-      if (merged[familyKey][criterionKey] === undefined) continue;
-      merged[familyKey][criterionKey] = Boolean(enabled);
+  for (const family of SUPERVISION_FAMILIES) {
+    merged[family.key] = {};
+    const inputFamily = input[family.key] && typeof input[family.key] === "object" ? input[family.key] : {};
+    for (const criterion of getCriteriaForFamily(family.key)) {
+      const raw =
+        inputFamily[criterion.key] !== undefined
+          ? inputFamily[criterion.key]
+          : defaults[family.key][criterion.key];
+      merged[family.key][criterion.key] = normalizeRuleValue(raw, criterion.key);
     }
   }
   return merged;
+}
+
+export function getSupervisionCriterionRule(familyKey, criterionKey, rules) {
+  const family = String(familyKey || "").toLowerCase();
+  const criterion = String(criterionKey || "");
+  const raw = rules?.[family]?.[criterion];
+  return normalizeRuleValue(raw, criterion);
+}
+
+export function isSupervisionCriterionEnabled(familyKey, criterionKey, rules) {
+  return getSupervisionCriterionRule(familyKey, criterionKey, rules).enabled;
+}
+
+export function getSupervisionCriterionSeverity(familyKey, criterionKey, rules) {
+  return getSupervisionCriterionRule(familyKey, criterionKey, rules).severity;
+}
+
+export function getSupervisionCriterionParameters(familyKey, criterionKey, rules) {
+  return getSupervisionCriterionRule(familyKey, criterionKey, rules).parameters;
+}
+
+/** Offline alert threshold (minutes) from rules — default 2880. */
+export function getOfflineAlertThresholdMinutesFromRules(rules) {
+  const params = getSupervisionCriterionParameters("ordinateurs", "agent_offline", rules);
+  const minutes = Number(params?.minutes);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : 2880;
+}
+
+/** Evaluation thresholds derived from rules for a family. */
+export function getEvaluationThresholdsFromRules(familyKey, rules) {
+  const family = String(familyKey || "").toLowerCase();
+  return {
+    offlineAlertThresholdMinutes: getOfflineAlertThresholdMinutesFromRules(rules),
+    diskCriticalPercent: Number(
+      getSupervisionCriterionParameters(family, "disk_critical", rules)?.percent
+    ) || 90,
+    diskWarnPercent: Number(
+      getSupervisionCriterionParameters(family, "disk_warn", rules)?.percent
+    ) || 80,
+    updatesMinPending: Number(
+      getSupervisionCriterionParameters(family, "updates_pending", rules)?.minPending
+    ) || 1,
+    warrantySoonDays: Number(
+      getSupervisionCriterionParameters(family, "warranty_soon", rules)?.days
+    ) || 30,
+    maintenanceSoonDays: Number(
+      getSupervisionCriterionParameters(family, "maintenance_soon", rules)?.days
+    ) || 30,
+    batterySoonDays: Number(
+      getSupervisionCriterionParameters(family, "battery_soon", rules)?.days
+    ) || 30,
+  };
 }
 
 let rulesCache = null;
@@ -187,18 +409,6 @@ export async function saveSupervisionAlertRules(rules) {
   rulesCache = merged;
   rulesCacheAt = Date.now();
   return merged;
-}
-
-export function isSupervisionCriterionEnabled(familyKey, criterionKey, rules) {
-  const family = String(familyKey || "").toLowerCase();
-  const criterion = String(criterionKey || "");
-  const familyRules = rules?.[family];
-  if (familyRules && familyRules[criterion] !== undefined) {
-    return Boolean(familyRules[criterion]);
-  }
-  const meta = criteriaByKey.get(criterion);
-  if (!meta) return true;
-  return Boolean(meta.defaultEnabled);
 }
 
 export function resolveCriterionFromMonitorStatus(monitorStatus, source = "checkmk") {

@@ -11,20 +11,20 @@ export function getJwtSecret() {
 }
 
 /**
- * Vérifie un JWT en imposant l'algorithme HMAC-SHA256.
- * Empêche les attaques de confusion d'algorithme (ex. jetons "alg":"none").
+ * Verifies a JWT enforcing the HMAC-SHA256 algorithm.
+ * Prevents algorithm confusion attacks (e.g. tokens with "alg":"none").
  */
 export function verifyToken(token) {
   return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] });
 }
 
 /**
- * Jetons à usage unique qui ne doivent JAMAIS servir de session applicative.
- * (bypass MFA / prise de contrôle via lien de réinitialisation, etc.)
+ * Single-use tokens that must NEVER serve as application sessions.
+ * (MFA bypass / account takeover via password reset link, etc.)
  */
 const NON_SESSION_PURPOSES = new Set(["mfa", "password_reset"]);
 
-/** Un jeton de session valide n'a pas de purpose, ou est une impersonation client. */
+/** A valid session token has no purpose, or is a client impersonation token. */
 export function isSessionPurpose(purpose) {
   if (!purpose) return true;
   return purpose === "client_impersonation";

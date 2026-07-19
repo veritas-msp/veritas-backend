@@ -92,7 +92,7 @@ router.post('/test-credentials', async (req, res) => {
 
 /**
  * GET /api/client-bitdefender/:clientId
- * Liste les tenants dédiés d'un client
+ * Lists a client's dedicated tenants
  */
 router.get('/:clientId', async (req, res) => {
   try {
@@ -161,7 +161,7 @@ router.get('/:clientId/:tenantId', async (req, res) => {
 
 /**
  * POST /api/client-bitdefender/:clientId
- * Crée un tenant dédié
+ * Creates a dedicated tenant
  */
 router.post('/:clientId', async (req, res) => {
   try {

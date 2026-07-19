@@ -7,20 +7,20 @@ import { getSettingsMap } from "../../utils/settingsHelper.js";
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 🔐 Configuration Microsoft Graph API
+// 🔐 Microsoft Graph API configuration
 // ───────────────────────────────────────────────
 
-// Cache pour les tokens d'accès (évite de demander un nouveau token à chaque requête)
-// IMPORTANT: Le cache doit être indexé par tenantId pour éviter de mélanger les tokens entre différents clients
+// Cache for access tokens (avoids requesting a new token on every request)
+// IMPORTANT: The cache must be keyed by tenantId to avoid mixing tokens across different clients
 // Structure: { [tenantId]: { token: string, expiresAt: number } }
 let tokenCache = {};
 
 /**
- * Récupère les paramètres Office 365 depuis la base de données (globaux)
+ * Fetch Office 365 settings from the database (global)
  */
 export async function getOffice365Settings() {
   try {
-    const map = await getSettingsMap(); // récupère toutes les clés déchiffrées
+    const map = await getSettingsMap(); // fetches all decrypted keys
     const settings = {};
     Object.entries(map).forEach(([k, v]) => {
       if (k.startsWith('office365_')) {
@@ -36,9 +36,9 @@ export async function getOffice365Settings() {
 }
 
 /**
- * Récupère les credentials Office 365 spécifiques à un client
- * @param {number} clientId - ID du client
- * @returns {Object|null} Credentials du client ou null si non configurés
+ * Fetch Office 365 credentials specific to a client
+ * @param {number} clientId - Client ID
+ * @returns {Object|null} Client credentials, or null if not configured
  */
 export async function getClientOffice365Credentials(clientId) {
   if (!clientId) return null;
@@ -57,7 +57,7 @@ export async function getClientOffice365Credentials(clientId) {
     
     const cred = result.rows[0];
     
-    // Déchiffrer le secret
+    // Decrypt the secret
     const { decrypt } = await import("../../utils/encryption.js");
     const clientSecret = decrypt(
       cred.client_secret_encrypted,
@@ -76,13 +76,13 @@ export async function getClientOffice365Credentials(clientId) {
 }
 
 /**
- * Obtient un token d'accès Microsoft Graph via Client Credentials Flow
- * Utilise un cache indexé par tenantId pour éviter de mélanger les tokens entre différents clients
- * IMPORTANT: Chaque tenantId doit avoir son propre token
+ * Obtain a Microsoft Graph access token via the Client Credentials flow
+ * Uses a cache keyed by tenantId to avoid mixing tokens across different clients
+ * IMPORTANT: Each tenantId must have its own token
  */
 export async function getMicrosoftGraphToken(tenantId, clientId, clientSecret) {
   try {
-    // Vérifier si le token en cache pour CE tenantId est encore valide
+    // Check whether the cached token for this tenantId is still valid
     const cachedToken = tokenCache[tenantId];
     if (cachedToken && cachedToken.token && cachedToken.expiresAt && Date.now() < cachedToken.expiresAt - 300000) {
       return cachedToken.token;
@@ -112,8 +112,8 @@ export async function getMicrosoftGraphToken(tenantId, clientId, clientSecret) {
 
     const data = await response.json();
     
-    // Mettre en cache le token avec sa date d'expiration pour CE tenantId spécifique
-    // Les tokens Microsoft expirent généralement après 3600 secondes (1 heure)
+    // Cache the token with its expiration time for this specific tenantId
+    // Microsoft tokens typically expire after 3600 seconds (1 hour)
     const expiresIn = data.expires_in || 3600;
     tokenCache[tenantId] = {
       token: data.access_token,
@@ -122,7 +122,7 @@ export async function getMicrosoftGraphToken(tenantId, clientId, clientSecret) {
     
     return data.access_token;
   } catch (error) {
-    // Réinitialiser le cache pour ce tenantId en cas d'erreur
+    // Clear the cache for this tenantId on error
     if (tokenCache[tenantId]) {
       delete tokenCache[tenantId];
     }
@@ -131,7 +131,7 @@ export async function getMicrosoftGraphToken(tenantId, clientId, clientSecret) {
 }
 
 /**
- * Formate les bytes en format lisible (KB, MB, GB, TB)
+ * Format bytes in a human-readable form (KB, MB, GB, TB)
  */
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return "0 B";
@@ -142,8 +142,8 @@ function formatBytes(bytes) {
 }
 
 /**
- * Parse le CSV retourné par les Reports API de Microsoft Graph
- * Gère les valeurs entre guillemets et les virgules dans les valeurs
+ * Parse CSV returned by the Microsoft Graph Reports API
+ * Handle values between quotes and comma-separated values
  */
 function parseCSV(csvText) {
   if (!csvText || typeof csvText !== 'string') return [];
@@ -151,7 +151,7 @@ function parseCSV(csvText) {
   const lines = csvText.split('\n').filter(line => line.trim());
   if (lines.length < 2) return [];
   
-  // Parser la première ligne (headers) en gérant les guillemets
+  // Parse the first line (headers), handling quoted fields
   const parseCSVLine = (line) => {
     const result = [];
     let current = '';
@@ -190,8 +190,8 @@ function parseCSV(csvText) {
 }
 
 /**
- * Détecte si un compte est probablement un compte de service (sync, bot, automation, etc.)
- * Basé sur les conventions courantes Azure AD / Entra ID. Critères : contient (nom, UPN ou email).
+ * Detect whether an account is likely a service account (sync, bot, automation, etc.)
+ * Based on common Azure AD / Entra ID naming conventions. Criteria: match in display name, UPN, or email.
  */
 function isLikelyServiceAccount(displayName, userPrincipalName, mail) {
   const dn = (displayName || '').toString();
@@ -200,20 +200,20 @@ function isLikelyServiceAccount(displayName, userPrincipalName, mail) {
   const combined = `${dn} ${upn} ${m}`.toLowerCase();
   const patterns = [
     /aad_/i, /msol_/i, /sync_/i, /svc_/i, /service_/i,
-    /\$@/,  // UPN avec $ (compte technique)
+    /\$@/,  // UPN with $ (service/technical account)
     /_srv/i, /_service/i, /_sync/i,
     /compte de service|service account|compte service/i,
     /bot\./i, /bot@/i, /connector/i, /automation/i,
     /azure ad sync|ad sync|dirsync|aadconnect|dir sync/i,
     /directory synchronization|synchronization service|on-premises/i,  // ex. On-Premises Directory Synchronization Service Account
-    /healthmailbox|systemmailbox|federatedemail/i  // boîtes système Exchange
+    /healthmailbox|systemmailbox|federatedemail/i  // Exchange system mailboxes
   ];
   return patterns.some(p => p.test(combined));
 }
 
 /**
- * Récupère une valeur dans un objet (ex. ligne de rapport CSV) en essayant plusieurs clés.
- * Supporte les variantes de noms (casse, espaces) pour les rapports Microsoft.
+ * Read a value from an object (e.g. CSV report row) by trying several keys.
+ * Supports name variants (case, spacing) for Microsoft reports.
  */
 function getReportRowValue(row, possibleKeys) {
   if (!row || typeof row !== 'object') return null;
@@ -229,7 +229,7 @@ function getReportRowValue(row, possibleKeys) {
 }
 
 // ───────────────────────────────────────────────
-// 🗂️ Helpers de traduction Secure Score
+// 🗂️ Secure Score translation helpers
 // ───────────────────────────────────────────────
 const secureScorePhraseDictionary = [
   { pattern: /Multi-factor authentication/gi, replacement: "authentification multifacteur" },
@@ -280,9 +280,9 @@ function translateSecureScoreText(text) {
   secureScorePhraseDictionary.forEach(({ pattern, replacement }) => {
     translated = translated.replace(pattern, replacement);
   });
-  // Nettoyer les espaces multiples
+  // Collapse multiple spaces
   translated = translated.replace(/\s+/g, " ").trim();
-  // Lettre majuscule initiale si phrase non vide
+  // Capitalize the first letter of a non-empty sentence
   if (translated.length > 0) {
     translated = translated.charAt(0).toUpperCase() + translated.slice(1);
   }
@@ -317,7 +317,7 @@ function translateCategoryLabel(category) {
 }
 
 function computeRecommendationPriority(profile) {
-  // Utiliser le champ priority direct si disponible (depuis /directory/recommendations)
+  // Use the direct priority field when available (from /directory/recommendations)
   const priorityDirect = (profile.priority || "").toLowerCase();
   if (priorityDirect === "high" || priorityDirect === "élevée" || priorityDirect === "élevé") {
     return { label: "Élevée", level: 3 };
@@ -327,7 +327,7 @@ function computeRecommendationPriority(profile) {
     return { label: "Faible", level: 1 };
   }
   
-  // Sinon, utiliser la logique existante
+  // Otherwise, use the existing logic
   const rank = typeof profile.rank === "number" ? profile.rank : null;
   const maxScore = typeof profile.maxScore === "number" ? profile.maxScore : 0;
   const tier = (profile.tier || "").toLowerCase();
@@ -359,8 +359,8 @@ function computeRecommendationPriority(profile) {
 }
 
 /**
- * Transforme la réponse Graph (/directory/recommendations ou /security/secureScoreControlProfiles)
- * en liste de recommandations triée (points, priorité).
+ * Transform the Graph response (/directory/recommendations or /security/secureScoreControlProfiles)
+ * into a sorted recommendation list (points, priority).
  */
 function mapSecureScoreProfilesToRecommendations(secureScoreProfiles) {
   if (!secureScoreProfiles?.value || !Array.isArray(secureScoreProfiles.value)) {
@@ -478,7 +478,7 @@ function extractActionableControlIds(latestSecureScore) {
       control?.maxScore ?? control?.controlMaxScore ?? control?.max ?? 0
     );
 
-    // "Pour gagner des points" => garder uniquement les contrôles encore améliorables.
+    // "To earn points" => keep only controls that can still be improved.
     if (Number.isFinite(maxScore) && maxScore > 0 && currentScore < maxScore) {
       actionableControlIds.add(String(controlId));
       return;
@@ -496,7 +496,7 @@ function extractActionableControlIds(latestSecureScore) {
 }
 
 /**
- * Appel générique à Microsoft Graph API avec support de la pagination et retry automatique
+ * Generic Microsoft Graph API call with pagination support and automatic retry
  */
 async function callMicrosoftGraph(endpoint, accessToken, options = {}) {
   const { getAllPages = false, isReport = false, maxRetries = 3, useBeta = false } = options;
@@ -506,7 +506,7 @@ async function callMicrosoftGraph(endpoint, accessToken, options = {}) {
     let allData = [];
     let nextLink = graphUrl;
     
-  // Fonction helper pour faire un appel avec retry
+  // Helper function to make an API call with retry
   const makeRequestWithRetry = async (url, retryCount = 0) => {
     try {
       const response = await fetch(url, {
@@ -527,7 +527,7 @@ async function callMicrosoftGraph(endpoint, accessToken, options = {}) {
           errorMessage += ` - ${errorText}`;
         }
         
-        // Gérer les erreurs "Please retry later" et rate limit (429) avec retry
+        // Handle "Please retry later" and rate-limit (429) errors with retry
         const isRetryableError = errorMessage.includes('Please retry later') || 
                                 errorMessage.includes('retry') || 
                                 response.status === 429 ||
@@ -535,25 +535,25 @@ async function callMicrosoftGraph(endpoint, accessToken, options = {}) {
                                 response.status === 502;
         
         if (isRetryableError && retryCount < maxRetries) {
-          // Calculer le délai avec backoff exponentiel (2^retryCount secondes, max 30s)
+          // Compute delay with exponential backoff (2^retryCount seconds, max 30s)
           const delay = Math.min(Math.pow(2, retryCount) * 1000, 30000);
           
           
-          // Attendre avant de réessayer
+          // Wait before retrying
           await new Promise(resolve => setTimeout(resolve, delay));
           
-          // Réessayer
+          // Retry
           return makeRequestWithRetry(url, retryCount + 1);
         }
         
-        // Ne pas logger comme erreur critique si c'est un rate limit ou "retry later" (même après retries)
+        // Do not log as a critical error for rate limits or "retry later" (even after retries)
         
         throw new Error(errorMessage);
       }
       
       return response;
     } catch (error) {
-      // Si c'est une erreur de retry et qu'on a encore des tentatives, relancer
+      // If it is a retryable error and attempts remain, retry
       if (retryCount < maxRetries && (error.message.includes('Please retry later') || error.message.includes('retry') || error.message.includes('429'))) {
         const delay = Math.min(Math.pow(2, retryCount) * 1000, 30000);
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -567,7 +567,7 @@ async function callMicrosoftGraph(endpoint, accessToken, options = {}) {
     do {
       const response = await makeRequestWithRetry(nextLink);
 
-      // Si c'est un rapport (CSV), parser le CSV
+      // If the response is a report (CSV), parse the CSV
       if (isReport) {
         const csvText = await response.text();
         const parsedData = parseCSV(csvText);
@@ -576,9 +576,9 @@ async function callMicrosoftGraph(endpoint, accessToken, options = {}) {
         } else {
           return { value: parsedData };
         }
-        break; // Les rapports ne sont pas paginés
+        break; // Reports are not paginated
       } else {
-        // Sinon, traiter comme du JSON
+        // Otherwise, treat the response as JSON
         const data = await response.json();
 
         if (getAllPages && data && typeof data === "object") {
@@ -591,7 +591,7 @@ async function callMicrosoftGraph(endpoint, accessToken, options = {}) {
       }
     } while (nextLink && getAllPages && !isReport);
     
-    // Retourner la structure avec toutes les données paginées
+    // Return the structure with all paginated data
     return { value: allData };
   } catch (error) {
     throw error;
@@ -599,24 +599,24 @@ async function callMicrosoftGraph(endpoint, accessToken, options = {}) {
 }
 
 // ───────────────────────────────────────────────
-// 📋 Routes API
+// 📋 API routes
 // ───────────────────────────────────────────────
 
 /**
  * GET /api/office365/test
- * Teste la connexion à Microsoft Graph API
+ * Test Microsoft Graph API connection
  */
 router.get("/test", verifyJWT, async (req, res) => {
   try {
-    // Essayer d'abord les credentials spécifiques au client si clientId est fourni
+    // Try client-specific credentials first when clientId is provided
     const clientId = req.query.clientId ? parseInt(req.query.clientId) : null;
     let credentials = null;
 
     if (clientId) {
       credentials = await getClientOffice365Credentials(clientId);
 
-      // Si le client n'a pas de configuration spécifique, retourner une erreur
-      // au lieu d'utiliser les settings globaux
+      // If the client has no specific configuration, return an error
+      // instead of using global settings
       if (!credentials) {
         return res.status(400).json({
           success: false,
@@ -624,7 +624,7 @@ router.get("/test", verifyJWT, async (req, res) => {
         });
       }
     } else {
-      // Pour les appels sans clientId spécifié, utiliser les settings globaux
+      // For calls without a specified clientId, use global settings
       const settings = await getOffice365Settings();
       if (settings && settings.tenant_id && settings.client_id && settings.client_secret) {
         credentials = {
@@ -648,7 +648,7 @@ router.get("/test", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Tester avec un appel simple (récupérer les informations de l'organisation)
+    // Test with a simple call (fetch organization information)
     const orgInfo = await callMicrosoftGraph("/organization", accessToken);
 
     res.json({
@@ -666,19 +666,19 @@ router.get("/test", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/licences
- * Récupère toutes les licences Office 365
+ * Fetch all Office 365 licenses
  */
 router.get("/licences", verifyJWT, async (req, res) => {
   try {
-    // Essayer d'abord les credentials spécifiques au client si clientId est fourni
+    // Try client-specific credentials first when clientId is provided
     const clientId = req.query.clientId ? parseInt(req.query.clientId) : null;
     let credentials = null;
 
     if (clientId) {
       credentials = await getClientOffice365Credentials(clientId);
 
-      // Si le client n'a pas de configuration spécifique, retourner une erreur
-      // au lieu d'utiliser les settings globaux
+      // If the client has no specific configuration, return an error
+      // instead of using global settings
       if (!credentials) {
         return res.status(400).json({
           success: false,
@@ -686,7 +686,7 @@ router.get("/licences", verifyJWT, async (req, res) => {
         });
       }
     } else {
-      // Pour les appels sans clientId spécifié, utiliser les settings globaux
+      // For calls without a specified clientId, use global settings
       if (!credentials) {
         const settings = await getOffice365Settings();
         if (settings && settings.tenant_id && settings.client_id && settings.client_secret) {
@@ -712,10 +712,10 @@ router.get("/licences", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Récupérer les subscribed SKUs (licences)
+    // Fetch subscribed SKUs (licenses)
     const subscribedSkus = await callMicrosoftGraph("/subscribedSkus", accessToken);
 
-    // Transformer les données pour correspondre au format attendu par le frontend
+    // Transform data to match the format expected by the frontend
     const licences = subscribedSkus.value.map(sku => {
       const consumed = sku.consumedUnits || 0;
       const total = sku.prepaidUnits?.enabled || 0;
@@ -726,7 +726,7 @@ router.get("/licences", verifyJWT, async (req, res) => {
         total: total,
         utilisees: consumed,
         disponibles: available,
-        // Informations supplémentaires
+        // Additional information
         skuId: sku.skuId,
         displayName: sku.displayName,
         servicePlans: sku.servicePlans || []
@@ -747,11 +747,11 @@ router.get("/licences", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/users
- * Récupère les utilisateurs Office 365 avec pagination
+ * Fetch Office 365 users with pagination
  */
 router.get("/users", verifyJWT, async (req, res) => {
   try {
-    // Essayer d'abord les credentials spécifiques au client si clientId est fourni
+    // Try client-specific credentials first when clientId is provided
     const clientId = req.query.clientId ? parseInt(req.query.clientId) : null;
     let credentials = null;
     
@@ -759,7 +759,7 @@ router.get("/users", verifyJWT, async (req, res) => {
       credentials = await getClientOffice365Credentials(clientId);
     }
     
-    // Si pas de credentials client, utiliser les paramètres globaux
+    // If no client credentials, use global settings
     if (!credentials) {
       const settings = await getOffice365Settings();
       if (settings && settings.tenant_id && settings.client_id && settings.client_secret) {
@@ -787,7 +787,7 @@ router.get("/users", verifyJWT, async (req, res) => {
     const pageSize = parseInt(req.query.pageSize) || 100;
     const skip = (parseInt(req.query.page) - 1) * pageSize || 0;
     
-    // Construire l'URL avec les paramètres de pagination
+    // Build URL with pagination settings
     let endpoint = `/users?$top=${pageSize}&$skip=${skip}&$select=displayName,mail,userPrincipalName,jobTitle,department,assignedLicenses`;
     
     if (req.query.filter) {
@@ -796,12 +796,12 @@ router.get("/users", verifyJWT, async (req, res) => {
 
     const usersData = await callMicrosoftGraph(endpoint, accessToken);
 
-    // Transformer les données pour correspondre au format attendu
+    // Transform data to the expected format
     const users = usersData.value.map(user => {
-      // Récupérer les noms des licences assignées
+      // Fetch assigned license names
       const licenseNames = user.assignedLicenses?.map(license => {
-        // Note: Pour obtenir les noms réels des licences, il faudrait faire un appel supplémentaire
-        // Pour l'instant, on retourne juste les SKU IDs
+        // Note: fetching real license names would require an additional API call
+        // For now, return SKU IDs only
         return license.skuId;
       }) || [];
 
@@ -832,19 +832,19 @@ router.get("/users", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/data
- * Récupère toutes les données Office 365 (licences + utilisateurs) en une seule requête
+ * Fetch all Office 365 data (licenses + users) in a single request
  */
 router.get("/data", verifyJWT, async (req, res) => {
   try {
-    // Essayer d'abord les credentials spécifiques au client si clientId est fourni
+    // Try client-specific credentials first when clientId is provided
     const clientId = req.query.clientId ? parseInt(req.query.clientId) : null;
     let credentials = null;
 
     if (clientId) {
       credentials = await getClientOffice365Credentials(clientId);
       
-      // Si le client n'a pas de configuration spécifique, retourner une erreur
-      // au lieu d'utiliser les settings globaux
+      // If the client has no specific configuration, return an error
+      // instead of using global settings
       if (!credentials) {
         return res.status(400).json({
           success: false,
@@ -852,7 +852,7 @@ router.get("/data", verifyJWT, async (req, res) => {
         });
       }
     } else {
-      // Pour les appels sans clientId spécifié, utiliser les settings globaux
+      // For calls without a specified clientId, use global settings
       const settings = await getOffice365Settings();
       if (settings && settings.tenant_id && settings.client_id && settings.client_secret) {
         credentials = {
@@ -876,11 +876,11 @@ router.get("/data", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Récupérer les licences et les utilisateurs en parallèle
-    // Utiliser getAllPages pour récupérer tous les utilisateurs (pas seulement les 999 premiers)
-    // Ajouter signInActivity pour obtenir la date de dernière connexion
-    // Essayer aussi de récupérer les utilisateurs actifs via Reports API comme fallback
-    // Essayer de récupérer le score d'adoption (peut ne pas être disponible via l'API)
+    // Fetch licenses and users in parallel
+    // Use getAllPages to fetch all users (not just the first 999)
+    // Include signInActivity to get the last sign-in date
+    // Also try fetching active users via the Reports API as a fallback
+    // Try to fetch the adoption score (may not be available via the API)
     const [subscribedSkus, usersData, activeUsersReport, signInsData, adoptionScore] = await Promise.all([
       callMicrosoftGraph("/subscribedSkus", accessToken),
       callMicrosoftGraph("/users?$select=displayName,mail,userPrincipalName,jobTitle,department,assignedLicenses,signInActivity,accountEnabled,createdDateTime", accessToken, { getAllPages: true }).catch(err => {
@@ -890,16 +890,16 @@ router.get("/data", verifyJWT, async (req, res) => {
       callMicrosoftGraph("/auditLogs/signIns?$top=2000&$orderby=createdDateTime desc", accessToken).catch(() => null)
     ]);
 
-    // Créer un mapping des SKU IDs vers les noms de licences pour enrichir les données utilisateurs
+    // Create a mapping from SKU IDs to license names to enrich user data
     const skuIdToName = {};
     subscribedSkus.value.forEach(sku => {
       skuIdToName[sku.skuId] = sku.skuPartNumber || sku.displayName || "Licence inconnue";
     });
 
-    // Transformer les licences (exclure les licences illimitées)
+    // Transform licenses (exclude unlimited licenses)
     const licences = subscribedSkus.value
       .filter(sku => {
-        // Filtrer les licences illimitées (>= 10000 ou très grandes valeurs)
+        // Filter unlimited licenses (>= 10000 or very large values)
         const total = sku.prepaidUnits?.enabled || 0;
         return total < 10000 && total > 0;
       })
@@ -919,7 +919,7 @@ router.get("/data", verifyJWT, async (req, res) => {
         };
       });
 
-    // Créer un mapping des emails/UPN vers la date de dernière connexion (rapport Office 365)
+    // Build an email/UPN to last sign-in date mapping (Office 365 report)
     const emailToLastLogin = {};
     const reportUpnKeys = ['User Principal Name', 'UserPrincipalName', 'User'];
     const reportDateKeys = ['Last Activity Date (UTC)', 'Last Activity Date', 'LastActivityDate'];
@@ -946,7 +946,7 @@ router.get("/data", verifyJWT, async (req, res) => {
       });
     }
 
-    // Fallback : dernière connexion depuis auditLogs/signIns (connexions réussies)
+    // Fallback: last sign-in from auditLogs/signIns (successful sign-ins)
     const signInToLastLogin = {};
     if (signInsData && signInsData.value && Array.isArray(signInsData.value)) {
       signInsData.value.forEach(signIn => {
@@ -957,7 +957,7 @@ router.get("/data", verifyJWT, async (req, res) => {
       });
     }
 
-    // Transformer les utilisateurs avec les noms de licences et la date de dernière connexion
+    // Transform users with license names and last sign-in date
     const usersListData = Array.isArray(usersData?.value) ? usersData.value : [];
     const users = usersListData.map(user => {
       const licenseNames = user.assignedLicenses
@@ -990,16 +990,16 @@ router.get("/data", verifyJWT, async (req, res) => {
         licenses: licenseNames,
         userPrincipalName: user.userPrincipalName,
         lastLoginDate,
-        accountEnabled: user.accountEnabled !== false, // Par défaut true si non spécifié
+        accountEnabled: user.accountEnabled !== false, // Default to true when not specified
         createdDate: user.createdDateTime || null,
         isServiceAccount: !!isServiceAccount
       };
     });
 
-    // Traiter le score d'adoption si disponible
+    // Process adoption score when available
     let adoptionScoreData = null;
     if (adoptionScore && adoptionScore.value) {
-      // Le format peut varier, essayer différentes structures
+      // The format may vary; try different structures
       const scoreEntry = Array.isArray(adoptionScore.value) ? adoptionScore.value[0] : adoptionScore.value;
       if (scoreEntry) {
         adoptionScoreData = {
@@ -1012,7 +1012,7 @@ router.get("/data", verifyJWT, async (req, res) => {
       }
     }
 
-    // Construire la payload renvoyée au frontend
+    // Build payload sent to the frontend
     const payload = {
       success: true,
       licences: licences,
@@ -1021,7 +1021,7 @@ router.get("/data", verifyJWT, async (req, res) => {
       lastUpdate: new Date().toISOString()
     };
 
-    // Si un clientId est fourni, sauvegarder un snapshot dans v_b_clients_m_o365
+    // When a clientId is provided, back up a snapshot in v_b_clients_m_o365
     if (clientId) {
       try {
         const snapshotData = {
@@ -1032,7 +1032,7 @@ router.get("/data", verifyJWT, async (req, res) => {
           lastUpdate: payload.lastUpdate
         };
 
-        // Supprimer les anciens snapshots pour ce client / tenant, puis insérer le nouveau
+        // Delete old snapshots for this client/tenant, then insert the new one
         await pool.query(
           `DELETE FROM v_b_clients_m_o365 
            WHERE client_id = $1 
@@ -1052,8 +1052,8 @@ router.get("/data", verifyJWT, async (req, res) => {
           ]
         );
       } catch (dbError) {
-        console.error('Erreur lors de la sauvegarde des données Office 365 dans v_b_clients_m_o365:', dbError);
-        // On ne bloque pas la réponse pour une erreur de persistance
+        console.error('Error saving Office 365 data to v_b_clients_m_o365:', dbError);
+        // Do not block the response on a persistence error
       }
     }
 
@@ -1068,7 +1068,7 @@ router.get("/data", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/exchange
- * Récupère les données Exchange Online
+ * Fetch Exchange Online data
  */
 router.get("/exchange", verifyJWT, async (req, res) => {
   try {
@@ -1078,8 +1078,8 @@ router.get("/exchange", verifyJWT, async (req, res) => {
     if (clientId) {
       credentials = await getClientOffice365Credentials(clientId);
       
-      // Si le client n'a pas de configuration spécifique, retourner une erreur
-      // au lieu d'utiliser les settings globaux
+      // If the client has no specific configuration, return an error
+      // instead of using global settings
       if (!credentials) {
         return res.status(400).json({
           success: false,
@@ -1112,9 +1112,9 @@ router.get("/exchange", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Récupérer les statistiques d'emails via Reports API uniquement (pas de lecture de contenu)
-    // Toujours utiliser D90 pour récupérer le maximum de données, puis filtrer selon les dates du rapport
-    const period = 'D90'; // Toujours D90 pour avoir le maximum de données
+    // Fetch email statistics via Reports API only (no mailbox content reads)
+    // Always use D90 to fetch maximum data, then filter by report dates
+    const period = 'D90'; // Toujours D90 for have maximum de data
     const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
     const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
     
@@ -1124,31 +1124,31 @@ router.get("/exchange", verifyJWT, async (req, res) => {
       callMicrosoftGraph(`/reports/getMailboxUsageDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
       callMicrosoftGraph(`/reports/getEmailActivityUserDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
       callMicrosoftGraph(`/reports/getOffice365ActiveUserDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
-      // Récupérer les utilisateurs avec leurs paramètres de boîte aux lettres pour obtenir les quotas
-      // Note: mailboxSettings nécessite des permissions spéciales et peut ne pas être disponible pour tous les utilisateurs
+      // Fetch users with mailbox settings to obtain quotas
+      // Note: mailboxSettings requires special permissions and may not be available for all users
       callMicrosoftGraph("/users?$select=id,displayName,mail,userPrincipalName", accessToken, { getAllPages: true }).catch(() => null)
     ]);
 
-    // Calculer les statistiques agrégées
+    // Compute aggregated statistics
     let totalSent = 0;
     let totalReceived = 0;
     let totalRead = 0;
     let totalMailboxSize = 0;
     let totalMailboxes = 0;
-    let dailyActivity = []; // Pour le graphique
+    let dailyActivity = []; // For charts
 
     if (emailActivity && emailActivity.value) {
       emailActivity.value.forEach(day => {
-        // Les colonnes peuvent varier selon la version de l'API
+        // Columns may vary by API version
         const sent = parseInt(day.Send || day.send || day['Send Count'] || 0);
         const received = parseInt(day.Receive || day.receive || day['Receive Count'] || 0);
         const read = parseInt(day.Read || day.read || day['Read Count'] || 0);
         
-        // Préparer les données pour le graphique
+        // Prepare data for the chart
         const date = day.ReportDate || day['Report Date'] || day.reportDate || day.date || '';
         const dayDate = new Date(date);
         
-        // Totaux éventuellement filtrés par période ; graphique = toutes les dates
+        // Totals optionally filtered by period; chart uses all dates
         if (startDate && endDate) {
           const dayDateOnly = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate());
           const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
@@ -1163,7 +1163,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
           totalReceived += received;
           totalRead += read;
         }
-        // Graphique : toujours toutes les dates disponibles (pas de filtre)
+        // Chart: always include all dates (no filtering)
         dailyActivity.push({
           date: date,
           sent: sent,
@@ -1172,7 +1172,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
         });
       });
       
-      // Trier par date (du plus ancien au plus récent)
+      // Sort by date (oldest to newest)
       dailyActivity.sort((a, b) => {
         const dateA = new Date(a.date);
         const dateB = new Date(b.date);
@@ -1180,14 +1180,14 @@ router.get("/exchange", verifyJWT, async (req, res) => {
       });
     }
 
-    // Créer un mapping des utilisateurs avec leurs quotas depuis mailboxSettings
+    // Create a user mapping with quotas from mailboxSettings
     const userQuotaMap = new Map();
     if (usersWithMailboxSettings && usersWithMailboxSettings.value) {
       usersWithMailboxSettings.value.forEach(user => {
         if (user.mailboxSettings && user.userPrincipalName) {
           const emailKey = user.userPrincipalName.toLowerCase();
-          // mailboxSettings peut contenir storageQuota (en bytes) ou issueWarningQuota
-          // Essayer aussi prohibitSendReceiveQuota qui est souvent le quota maximum
+          // mailboxSettings may contain storageQuota (in bytes) or issueWarningQuota
+          // Also try prohibitSendReceiveQuota, which is often the maximum quota
           const quota = user.mailboxSettings.prohibitSendReceiveQuota || 
                        user.mailboxSettings.storageQuota || 
                        user.mailboxSettings.issueWarningQuota || 
@@ -1201,11 +1201,11 @@ router.get("/exchange", verifyJWT, async (req, res) => {
       });
     }
     
-    // Utiliser les données de mailboxUsage depuis Reports API (pas besoin de Mail.Read)
+    // Use mailboxUsage data from the Reports API (Mail.Read not required)
     let totalItemCount = 0;
     let averageMailboxSize = 0;
     let averageItemCount = 0;
-    const mailboxQuotas = []; // Liste détaillée des quotas par utilisateur
+    const mailboxQuotas = []; // Detailed per-user quota list
     
     if (mailboxUsage && mailboxUsage.value) {
       mailboxUsage.value.forEach(mailbox => {
@@ -1218,7 +1218,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
           0
         );
         
-        // Essayer d'abord depuis le rapport, puis depuis mailboxSettings
+        // Try report data first, then mailboxSettings
         let storageQuota = parseInt(
           mailbox['Storage Quota (Byte)'] ||
           mailbox['Storage Quota'] ||
@@ -1240,7 +1240,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
                                   mailbox.userPrincipalName || 
                                   'Inconnu';
         
-        // Enrichir avec les données depuis userQuotaMap
+        // Enrich with data from userQuotaMap
         const emailKey = userPrincipalName.toLowerCase();
         const userInfo = userQuotaMap.get(emailKey);
         
@@ -1250,7 +1250,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
                            mailbox.displayName || 
                            userPrincipalName.split('@')[0];
         
-        // Si pas de quota depuis le rapport, utiliser celui de mailboxSettings
+        // If the report has no quota, use mailboxSettings instead
         if (storageQuota === 0 && userInfo?.quota) {
           storageQuota = userInfo.quota;
         }
@@ -1259,7 +1259,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
         totalMailboxSize += storageUsed;
         totalItemCount += itemCount;
         
-        // Ajouter à la liste des quotas
+        // Add to list quotas
         mailboxQuotas.push({
           displayName: displayName,
           user: displayName,
@@ -1272,24 +1272,24 @@ router.get("/exchange", verifyJWT, async (req, res) => {
         });
       });
       
-      // Calculer les moyennes
+      // Compute averages
       if (totalMailboxes > 0) {
         averageMailboxSize = Math.round(totalMailboxSize / totalMailboxes);
         averageItemCount = Math.round(totalItemCount / totalMailboxes);
       }
       
-      // Trier par taille utilisée (du plus grand au plus petit)
+      // Sort by used size (largest to smallest)
       mailboxQuotas.sort((a, b) => b.storageUsed - a.storageUsed);
     }
 
-    // Calculer les moyennes et taux
+    // Compute averages and taux
     const daysCount = dailyActivity.length || 1;
     const avgSent = Math.round(totalSent / daysCount);
     const avgReceived = Math.round(totalReceived / daysCount);
     const avgRead = Math.round(totalRead / daysCount);
     const readRate = totalReceived > 0 ? ((totalRead / totalReceived) * 100).toFixed(1) : 0;
 
-    // Calculer les statistiques par jour de la semaine
+    // Compute statistics by day of week
     const weeklyStats = {
       monday: { sent: 0, received: 0, read: 0, count: 0 },
       tuesday: { sent: 0, received: 0, read: 0, count: 0 },
@@ -1317,7 +1317,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
       });
     }
 
-    // Calculer les moyennes par jour de la semaine
+    // Compute averages by day of week
     const weeklyStatsFormatted = {
       lundi: {
         sent: weeklyStats.monday.count > 0 ? Math.round(weeklyStats.monday.sent / weeklyStats.monday.count) : 0,
@@ -1356,11 +1356,11 @@ router.get("/exchange", verifyJWT, async (req, res) => {
       }
     };
 
-    // Calculer le top 5 des utilisateurs
-    // Le rapport getEmailActivityUserDetail peut retourner des IDs hashés ou des emails réels
+    // Compute top 5 users
+    // getEmailActivityUserDetail may return hashed IDs or real emails
     let topUsers = [];
     
-    // Créer un mapping des utilisateurs depuis usersWithMailboxSettings (déjà récupéré)
+    // Build a user mapping from usersWithMailboxSettings (already fetched)
     let allUsersMap = new Map();
     if (usersWithMailboxSettings && usersWithMailboxSettings.value) {
       usersWithMailboxSettings.value.forEach(u => {
@@ -1374,7 +1374,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
       });
     }
     
-    // Utiliser getEmailActivityUserDetail pour les statistiques
+    // Use getEmailActivityUserDetail for statistics
     if (emailActivityUserDetail && emailActivityUserDetail.value) {
       const userMap = new Map();
       
@@ -1385,11 +1385,11 @@ router.get("/exchange", verifyJWT, async (req, res) => {
         const received = parseInt(user['Receive Count'] || user['Receive'] || user.receive || user.receiveCount || 0);
         const read = parseInt(user['Read Count'] || user['Read'] || user.read || user.readCount || 0);
         
-        // Vérifier si c'est un ID hashé (longue chaîne hex) ou un email réel
+        // Check whether this is a hashed ID (long hex string) or a real email
         const isHashedId = /^[0-9A-F]{32,}$/i.test(identifier);
         
         if (isHashedId) {
-          // C'est un ID hashé, essayer de le mapper via le rapport activeUsersReport
+          // Hashed ID: try mapping via activeUsersReport
           let mappedUser = null;
           if (activeUsersReport && activeUsersReport.value) {
             const matched = activeUsersReport.value.find(activeUser => {
@@ -1425,7 +1425,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
           userStat.read += read;
           userStat.total = userStat.sent + userStat.received;
         } else if (identifier.includes('@')) {
-          // C'est un email réel, on peut l'enrichir avec les noms
+          // Real email: enrich with display names
           const emailKey = identifier.toLowerCase();
           if (!userMap.has(emailKey)) {
             const userInfo = allUsersMap.get(emailKey) || {
@@ -1452,9 +1452,9 @@ router.get("/exchange", verifyJWT, async (req, res) => {
         }
       });
       
-      // Trier par total (envoyés + reçus) et prendre le top 5
+      // Sort by total (sent + received) and take top 5
       topUsers = Array.from(userMap.values())
-        .filter(user => user.total > 0) // Filtrer les utilisateurs avec au moins une activité
+        .filter(user => user.total > 0) // Keep users with at least one activity
         .sort((a, b) => b.total - a.total)
         .slice(0, 5)
         .map(user => ({
@@ -1474,7 +1474,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
         received: totalReceived,
         read: totalRead,
         period: period,
-        dailyActivity: dailyActivity, // Données quotidiennes pour le graphique
+        dailyActivity: dailyActivity, // Daily data for charts
         averages: {
           sent: avgSent,
           received: avgReceived,
@@ -1489,7 +1489,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
         averageSize: formatBytes(averageMailboxSize),
         totalItems: totalItemCount,
         averageItems: averageItemCount,
-        quotas: mailboxQuotas // Liste détaillée des quotas par utilisateur
+        quotas: mailboxQuotas // Detailed per-user quota list
       },
       appUsage: emailAppUsage || null,
       topUsers: topUsers,
@@ -1505,7 +1505,7 @@ router.get("/exchange", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/teams
- * Récupère les données Microsoft Teams
+ * Fetch Microsoft Teams data
  */
 router.get("/teams", verifyJWT, async (req, res) => {
   try {
@@ -1515,8 +1515,8 @@ router.get("/teams", verifyJWT, async (req, res) => {
     if (clientId) {
       credentials = await getClientOffice365Credentials(clientId);
       
-      // Si le client n'a pas de configuration spécifique, retourner une erreur
-      // au lieu d'utiliser les settings globaux
+      // If the client has no specific configuration, return an error
+      // instead of using global settings
       if (!credentials) {
         return res.status(400).json({
           success: false,
@@ -1547,7 +1547,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Toujours récupérer D90 (période la plus longue) puis filtrer par les dates de monitoring
+    // Always fetch D90 (longest period) then filter by monitoring dates
     const period = 'D90';
     const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
     const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
@@ -1587,7 +1587,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
       }
     };
     
-    // Récupérer les données Teams
+    // Fetch data Teams
     const [teams, teamsActivity, teamsDeviceUsage, callRecords] = await Promise.all([
       callMicrosoftGraph("/teams", accessToken, { getAllPages: true }).catch((err) => {
         return null;
@@ -1603,9 +1603,9 @@ router.get("/teams", verifyJWT, async (req, res) => {
       })
     ]);
     
-    // Logs réduits pour optimiser la synchronisation
+    // Reduced logging to optimize synchronization
 
-    // Calculer les statistiques
+    // Compute statistics
     let totalTeams = 0;
     let activeUsers = new Set();
     let totalMessages = 0;
@@ -1641,7 +1641,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
       totalTeams = teams.value.length;
     }
 
-    // Préparer les compteurs de membres et de canaux par équipe (non bloquant)
+    // Prepare member and channel counts per team (non-blocking)
     const teamMemberCounts = new Map();
     const teamChannelCounts = new Map();
     if (teams && teams.value && teams.value.length > 0) {
@@ -1663,11 +1663,11 @@ router.get("/teams", verifyJWT, async (req, res) => {
           })
         );
       } catch {
-        // En cas d'erreur globale, laisser les maps vides → comptes à 0, on renvoie quand même la liste
+        // On global error, leave maps empty → counts default to 0; still return the team list
       }
     }
 
-    // Traiter les données détaillées par utilisateur
+    // Process detailed per-user data
     if (teamsActivity && teamsActivity.value) {
       if (teamsActivity.value.length > 0) {
         reportRefreshDate = teamsActivity.value[0]['Report Refresh Date'] || teamsActivity.value[0]['ReportRefreshDate'] || null;
@@ -1677,8 +1677,8 @@ router.get("/teams", verifyJWT, async (req, res) => {
       let entriesMatchingPeriod = 0;
       
       teamsActivity.value.forEach(user => {
-        // Les colonnes CSV peuvent avoir des espaces : "Team Chat Message Count", "Meeting Count", "User Principal Name"
-        // Essayer toutes les variantes possibles
+        // CSV columns may include spaces: "Team Chat Message Count", "Meeting Count", "User Principal Name"
+        // Try all possible variants
         const userPrincipalName = user['User Principal Name'] || user['UserPrincipalName'] || user.userPrincipalName || user['User'] || user['User Name'] || '';
         const lastActivityDate = user['Last Activity Date'] || user['LastActivityDate'] || user.lastActivityDate || null;
         const dateKey = getDateKey(lastActivityDate);
@@ -1689,7 +1689,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
         if (isDeleted) deletedUsers++;
         if (hasOtherAction) hasOtherActionCount++;
         
-        // Essayer toutes les variantes pour les messages (Team Chat + Private Chat)
+        // Try all variants for messages (Team Chat + Private Chat)
         let matchesMonitoringPeriod = true;
         if (startDate && endDate) {
           if (!lastActivityDate || lastActivityDate === '') {
@@ -1730,7 +1730,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
           user['PrivateChat']
         );
         
-        // Essayer toutes les variantes pour les réunions
+        // Try all variants for meetings
         const meetingCount = parseNumber(
           user['Meeting Count'] || 
           user['MeetingCount'] || 
@@ -1853,7 +1853,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
           user.screenShareDurationInSeconds
         );
         
-        // Ajouter les messages et interactions
+        // Add messages and interactions
         if (dateKey) {
           if (!dailyActivityMap.has(dateKey)) {
             dailyActivityMap.set(dateKey, {
@@ -1896,7 +1896,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
         screenShareDurationSeconds += screenShareDuration;
         callDurationFromActivity += audioDuration + videoDuration + screenShareDuration;
         
-        // Ajouter à la liste des utilisateurs actifs si activité
+        // Add to active users list when there is activity
         if (teamChatMessageCount > 0 || privateChatMessageCount > 0 || meetingCount > 0 || callCount > 0) {
           if (userPrincipalName) {
             activeUsers.add(userPrincipalName);
@@ -1908,12 +1908,12 @@ router.get("/teams", verifyJWT, async (req, res) => {
       }
     }
 
-    // Récupérer les données d'appels depuis les rapports Teams
-    // L'API /communications/callRecords nécessite des permissions spéciales et peut ne pas être disponible
+    // Fetch data appels from rapports Teams
+    // The /communications/callRecords API requires special permissions and may be unavailable
     if (callRecords && callRecords.value && callRecords.value.length > 0) {
-      // Log pour déboguer
+      // Log for debugging
       
-      // Filtrer les appels par période de monitoring si les dates sont fournies
+      // Filter calls by monitoring period when dates are provided
       let filteredCalls = callRecords.value;
       if (startDate && endDate) {
         filteredCalls = callRecords.value.filter(call => {
@@ -1933,23 +1933,23 @@ router.get("/teams", verifyJWT, async (req, res) => {
       filteredCalls.forEach(call => {
         let callDurationSeconds = 0;
         
-        // Calculer la durée à partir de startDateTime et endDateTime (méthode principale)
+        // Compute duration from startDateTime and endDateTime (primary method)
         if (call.startDateTime && call.endDateTime) {
           try {
             const startDate = new Date(call.startDateTime);
             const endDate = new Date(call.endDateTime);
             if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime()) && endDate > startDate) {
-              callDurationSeconds = Math.floor((endDate - startDate) / 1000); // Durée en secondes
+              callDurationSeconds = Math.floor((endDate - startDate) / 1000); // Duration in seconds
             }
           } catch (e) {
           }
         }
         
-        // Si la durée n'a pas pu être calculée depuis les dates, essayer les autres champs
+        // If duration could not be computed from dates, try other fields
         if (callDurationSeconds === 0) {
         const duration = call.duration || call.callDuration || call.durationInSeconds || call.callDurationInSeconds || 0;
         if (typeof duration === 'string' && duration.startsWith('PT')) {
-          // Parser ISO 8601 duration (PT1H30M45S = 1 heure 30 minutes 45 secondes)
+          // Parse ISO 8601 duration (PT1H30M45S = 1 hour 30 minutes 45 seconds)
           const hoursMatch = duration.match(/(\d+)H/);
           const minutesMatch = duration.match(/(\d+)M/);
           const secondsMatch = duration.match(/(\d+)S/);
@@ -1965,7 +1965,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
         totalCallDuration += callDurationSeconds;
       });
     } else {
-      // Log si aucun appel trouvé
+      // Log when no calls are found
       if (totalCalls === 0) {
       }
     }
@@ -1973,7 +1973,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
     const effectiveCallCount = totalCalls > 0 ? totalCalls : callCountFromActivity;
     const effectiveCallDuration = totalCallDuration > 0 ? totalCallDuration : callDurationFromActivity;
 
-    // Formater la durée des appels
+    // Format call duration
     const formatDuration = (seconds) => {
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor((seconds % 3600) / 60);
@@ -1994,7 +1994,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
     };
 
     let dailyActivity = Array.from(dailyActivityMap.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
-    // Graphique : on garde toutes les dates (pas de filtre par startDate/endDate)
+    // Chart: keep all dates (no startDate/endDate filtering)
 
     const messagesStats = {
       total: teamChatMessages + privateChatMessages,
@@ -2081,7 +2081,7 @@ router.get("/teams", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/onedrive
- * Récupère les données OneDrive for Business
+ * Fetch OneDrive for Business data
  */
 router.get("/onedrive", verifyJWT, async (req, res) => {
   try {
@@ -2091,8 +2091,8 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
     if (clientId) {
       credentials = await getClientOffice365Credentials(clientId);
       
-      // Si le client n'a pas de configuration spécifique, retourner une erreur
-      // au lieu d'utiliser les settings globaux
+      // If the client has no specific configuration, return an error
+      // instead of using global settings
       if (!credentials) {
         return res.status(400).json({
           success: false,
@@ -2123,12 +2123,12 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Toujours utiliser D90 pour récupérer le maximum de données, puis filtrer selon les dates du rapport
+    // Always use D90 to fetch maximum data, then filter by report dates
     const period = 'D90';
     const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
     const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
     
-    // Récupérer les données OneDrive (toutes les données disponibles)
+    // Fetch data OneDrive (all data availables)
     const [onedriveUsage, onedriveActivity, onedriveActivityFileCounts] = await Promise.all([
       callMicrosoftGraph(`/reports/getOneDriveUsageAccountDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
       callMicrosoftGraph(`/reports/getOneDriveActivityUserDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
@@ -2136,7 +2136,7 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
       callMicrosoftGraph(`/reports/getOneDriveActivityFileCounts(period='${period}')`, accessToken, { isReport: true }).catch(() => null)
     ]);
 
-    // Calculer les statistiques
+    // Compute statistics
     let totalStorageUsed = 0;
     let totalFiles = 0;
     let totalSharedFiles = 0;
@@ -2155,7 +2155,7 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
         totalFiles += fileCount;
         totalStorage += storageUsed;
         
-        // Détecter les utilisateurs proches du quota (supposons 1TB par défaut)
+        // Detect users near quota (assume 1 TB by default)
         const quotaBytes = 1024 * 1024 * 1024 * 1024; // 1TB
         const usagePercent = (storageUsed / quotaBytes) * 100;
         
@@ -2171,11 +2171,11 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
       });
     }
 
-    // Filtrer et traiter les données d'activité OneDrive
+    // Filter and process OneDrive activity data
     let filteredActivity = onedriveActivity?.value || [];
     if (onedriveActivity && onedriveActivity.value && startDate && endDate) {
       filteredActivity = onedriveActivity.value.filter(activity => {
-        // Essayer différentes colonnes de date
+        // Try different date columns
         const activityDate = activity['Last Activity Date'] || 
                             activity['LastActivityDate'] || 
                             activity['Report Date'] ||
@@ -2187,7 +2187,7 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
         
         try {
           const date = new Date(activityDate);
-          // Normaliser les dates (ignorer l'heure)
+          // Normalize dates (ignore time)
           const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
           const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
           const endDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
@@ -2211,7 +2211,7 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
       });
     }
 
-    // Traiter Number of files by activity type avec filtre de période
+    // Process Number of files by activity type with period filter
     const filesByActivityType = {
       viewedOrEdited: 0,
       synced: 0,
@@ -2222,7 +2222,7 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
     let filteredFileCounts = onedriveActivityFileCounts?.value || [];
     if (onedriveActivityFileCounts && onedriveActivityFileCounts.value && startDate && endDate) {
       filteredFileCounts = onedriveActivityFileCounts.value.filter(entry => {
-        // Essayer différentes colonnes de date
+        // Try different date columns
         const reportDate = entry['Report Date'] || 
                           entry['ReportDate'] ||
                           entry['Date'] ||
@@ -2233,7 +2233,7 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
         
         try {
           const date = new Date(reportDate);
-          // Normaliser les dates (ignorer l'heure)
+          // Normalize dates (ignore time)
           const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
           const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
           const endDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
@@ -2318,7 +2318,7 @@ router.get("/onedrive", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/sharepoint
- * Récupère les données SharePoint Online
+ * Fetch SharePoint Online data
  */
 router.get("/sharepoint", verifyJWT, async (req, res) => {
   try {
@@ -2328,8 +2328,8 @@ router.get("/sharepoint", verifyJWT, async (req, res) => {
     if (clientId) {
       credentials = await getClientOffice365Credentials(clientId);
       
-      // Si le client n'a pas de configuration spécifique, retourner une erreur
-      // au lieu d'utiliser les settings globaux
+      // If the client has no specific configuration, return an error
+      // instead of using global settings
       if (!credentials) {
         return res.status(400).json({
           success: false,
@@ -2549,14 +2549,14 @@ router.get("/sharepoint", verifyJWT, async (req, res) => {
       statsLastUpdate = latestReportDateFromDetail || new Date();
     }
 
-    // Filtrer et construire la liste des sites SharePoint
+    // Filter and build the SharePoint site list
     const sitesList = [];
     if (sharepointSites && sharepointSites.value) {
       sharepointSites.value.forEach(site => {
         const webUrl = site.webUrl || '';
         const siteId = site.id || '';
         
-        // Filtrer les sites système (hub, community, personal, M365 group sites avec GUID)
+        // Filter system sites (hub, community, personal, M365 group sites with GUID)
         const isSystemSite = 
           webUrl.includes('/portals/hub/') ||
           webUrl.includes('/portals/community/') ||
@@ -2564,7 +2564,7 @@ router.get("/sharepoint", verifyJWT, async (req, res) => {
           (siteId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(siteId) && webUrl.includes('/sites/'));
         
         if (!isSystemSite) {
-          // Récupérer les données d'activité depuis siteStats
+          // Fetch activity data from siteStats
           const siteActivity = siteStats.get(siteId);
           const isActive = siteActivity && siteActivity.lastActivityDate && 
             siteActivity.lastActivityDate >= activityWindowStart && 
@@ -2603,11 +2603,11 @@ router.get("/sharepoint", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/stats
- * Récupère les statistiques globales Office 365
+ * Fetch global Office 365 statistics
  */
 router.get("/stats", verifyJWT, async (req, res) => {
   try {
-    // Essayer d'abord les credentials spécifiques au client si clientId est fourni
+    // Try client-specific credentials first when clientId is provided
     const clientId = req.query.clientId ? parseInt(req.query.clientId) : null;
     let credentials = null;
     
@@ -2615,7 +2615,7 @@ router.get("/stats", verifyJWT, async (req, res) => {
       credentials = await getClientOffice365Credentials(clientId);
     }
     
-    // Si pas de credentials client, utiliser les paramètres globaux
+    // If no client credentials, use global settings
     if (!credentials) {
       const settings = await getOffice365Settings();
       if (settings && settings.tenant_id && settings.client_id && settings.client_secret) {
@@ -2640,10 +2640,10 @@ router.get("/stats", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Récupérer les données nécessaires
+    // Fetch required data
     const subscribedSkus = await callMicrosoftGraph("/subscribedSkus", accessToken);
     
-    // Récupérer le nombre d'utilisateurs
+    // Fetch number users
     const usersResponse = await fetch("https://graph.microsoft.com/v1.0/users/$count", {
       method: "GET",
       headers: {
@@ -2654,7 +2654,7 @@ router.get("/stats", verifyJWT, async (req, res) => {
     });
     const usersCount = parseInt(await usersResponse.text()) || 0;
 
-    // Calculer les statistiques
+    // Compute statistics
     const totalLicences = subscribedSkus.value.reduce((sum, sku) => sum + (sku.prepaidUnits?.enabled || 0), 0);
     const totalUtilisees = subscribedSkus.value.reduce((sum, sku) => sum + (sku.consumedUnits || 0), 0);
     const totalDisponibles = totalLicences - totalUtilisees;
@@ -2681,7 +2681,7 @@ router.get("/stats", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/secure-score-recommendations?clientId=
- * Recommandations Microsoft Secure Score (Graph : directory/recommendations ou secureScoreControlProfiles).
+ * Microsoft Secure Score recommendations (Graph: directory/recommendations or secureScoreControlProfiles).
  */
 router.get("/secure-score-recommendations", verifyJWT, async (req, res) => {
   try {
@@ -2720,12 +2720,12 @@ router.get("/secure-score-recommendations", verifyJWT, async (req, res) => {
       return max <= 0 || cur < max;
     });
 
-    // Source principale : recommandations tenant-scopées de Graph beta.
+    // Primary source: tenant-scoped recommendations from Graph beta.
     if (fromDirectory.length > 0) {
       return res.json({ success: true, recommendations: fromDirectory, total: fromDirectory.length });
     }
 
-    // Fallback : réduire secureScoreControlProfiles aux contrôles réellement actionnables du tenant.
+    // Fallback: reduce secureScoreControlProfiles to tenant-actionable controls.
     const [profilesRecs, secureScores] = await Promise.all([
       callMicrosoftGraph("/security/secureScoreControlProfiles", accessToken, { getAllPages: true }).catch(
         () => null
@@ -2756,7 +2756,7 @@ router.get("/secure-score-recommendations", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/security
- * Récupère les données de sécurité (MFA, rôles administrateurs)
+ * Fetch security data (MFA, administrator roles)
  */
 router.get("/security", verifyJWT, async (req, res) => {
   try {
@@ -2766,8 +2766,8 @@ router.get("/security", verifyJWT, async (req, res) => {
     if (clientId) {
       credentials = await getClientOffice365Credentials(clientId);
 
-      // Si le client n'a pas de configuration spécifique, retourner une erreur
-      // au lieu d'utiliser les settings globaux
+      // If the client has no specific configuration, return an error
+      // instead of using global settings
       if (!credentials) {
         return res.status(400).json({
           success: false,
@@ -2775,7 +2775,7 @@ router.get("/security", verifyJWT, async (req, res) => {
         });
       }
     } else {
-      // Pour les appels sans clientId spécifié, utiliser les settings globaux
+      // For calls without a specified clientId, use global settings
       const settings = await getOffice365Settings();
       if (settings && settings.tenant_id && settings.client_id && settings.client_secret) {
         credentials = {
@@ -2799,25 +2799,25 @@ router.get("/security", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Récupérer toutes les données de sécurité en parallèle
+    // Fetch all security data in parallel
     const [mfaReport, directoryRoles, usersData, signIns, riskDetections, servicePrincipalApps, secureScores, secureScoreProfiles, secureScoreHistory] = await Promise.all([
-      // Rapport MFA (si disponible)
+      // MFA report (when available)
       callMicrosoftGraph("/reports/authenticationMethods/userRegistrationDetails", accessToken, { isReport: true }).catch((err) => {
         return null;
       }),
-      // Rôles de répertoire (administrateurs)
+      // Directory roles (administrators)
       callMicrosoftGraph("/directoryRoles", accessToken).catch(() => null),
-      // Utilisateurs pour vérifier les méthodes d'authentification
+      // Users to verify authentication methods
       callMicrosoftGraph("/users?$select=id,displayName,mail,userPrincipalName,accountEnabled", accessToken, { getAllPages: true }).catch(() => null),
-      // Connexions pour détecter les activités suspectes
+      // Sign-ins to detect suspicious activity
       callMicrosoftGraph("/auditLogs/signIns?$top=500&$orderby=createdDateTime desc", accessToken).catch(() => null),
-      // Risques d'authentification
+      // Risques authentication
       callMicrosoftGraph("/identityProtection/riskDetections?$top=100&$orderby=detectedDateTime desc", accessToken).catch(() => null),
       // Applications tierces (service principals)
       callMicrosoftGraph("/servicePrincipals?$select=id,displayName,appId,servicePrincipalType", accessToken, { getAllPages: true }).catch(() => null),
-      // Secure Scores (récupérer tous les scores pour filtrer Microsoft 365 Defender)
+      // Secure Scores (fetch all scores to filter Microsoft 365 Defender)
       callMicrosoftGraph("/security/secureScores?$orderby=createdDateTime desc", accessToken, { getAllPages: true }).catch(() => null),
-      // Recommandations Entra ID - Essayer d'abord /directory/recommendations (beta), puis fallback sur secureScoreControlProfiles
+      // Entra ID recommendations — try /directory/recommendations (beta) first, then fall back to secureScoreControlProfiles
       (async () => {
         try {
           const directoryRecs = await callMicrosoftGraph("/directory/recommendations", accessToken, { getAllPages: true, useBeta: true });
@@ -2825,24 +2825,24 @@ router.get("/security", verifyJWT, async (req, res) => {
             return directoryRecs;
           }
         } catch (err) {
-          // Ignorer l'erreur et utiliser le fallback
+          // Ignore the error and use the fallback
         }
-        // Fallback sur secureScoreControlProfiles
+        // Fallback to secureScoreControlProfiles
         try {
           return await callMicrosoftGraph("/security/secureScoreControlProfiles", accessToken, { getAllPages: true });
         } catch (err) {
           return null;
         }
       })(),
-      // Historique du Secure Score (récupérer les 30 derniers jours)
+      // Secure Score history (fetch last 30 days)
       callMicrosoftGraph("/security/secureScores?$orderby=createdDateTime desc&$top=30", accessToken).catch(() => null)
     ]);
 
-    // Logs réduits pour optimiser la synchronisation
+    // Reduced logging to optimize synchronization
     if (mfaReport && mfaReport.value && mfaReport.value.length > 0) {
     }
 
-    // Traiter les données MFA
+    // Process MFA data
     let mfaStats = {
       totalUsers: 0,
       usersWithMFA: 0,
@@ -2857,10 +2857,10 @@ router.get("/security", verifyJWT, async (req, res) => {
     };
 
     if (mfaReport && mfaReport.value && mfaReport.value.length > 0) {
-      // Le rapport CSV peut avoir des colonnes avec des espaces
+      // The CSV report may have columns with spaces
       mfaStats.totalUsers = mfaReport.value.length;
       mfaReport.value.forEach(user => {
-        // Essayer différentes variantes de noms de colonnes
+        // Try different column name variants
         const isMfaRegistered = user['Is Mfa Registered'] === 'True' || 
                                 user['IsMfaRegistered'] === 'True' || 
                                 user.isMfaRegistered === true || 
@@ -2877,7 +2877,7 @@ router.get("/security", verifyJWT, async (req, res) => {
           mfaStats.usersWithoutMFA++;
         }
         
-        // Compter les méthodes MFA (peut être une chaîne séparée par des virgules ou un tableau)
+        // Count MFA methods (may be comma-separated string or array)
         const methodsRegistered = user['Methods Registered'] || 
                                   user['MethodsRegistered'] || 
                                   user.methodsRegistered || 
@@ -2904,16 +2904,16 @@ router.get("/security", verifyJWT, async (req, res) => {
       });
       mfaStats.mfaRate = mfaStats.totalUsers > 0 ? Math.round((mfaStats.usersWithMFA / mfaStats.totalUsers) * 100) : 0;
     } else if (usersData && usersData.value && usersData.value.length > 0) {
-      // Fallback : essayer de récupérer les méthodes d'authentification pour chaque utilisateur
-      // Limiter à 100 utilisateurs pour éviter trop de requêtes
+      // Fallback: try fetching authentication methods for each user
+      // Limit to 100 users to avoid too many requests
       mfaStats.totalUsers = usersData.value.length;
-      const usersToCheck = usersData.value; // Récupérer TOUS les utilisateurs
+      const usersToCheck = usersData.value; // Check all users
 
       const mfaChecks = await Promise.allSettled(
         usersToCheck.map(async (user) => {
           try {
             const methods = await callMicrosoftGraph(`/users/${user.id}/authentication/methods`, accessToken).catch(() => null);
-            // Un utilisateur a la MFA s'il a au moins une méthode d'authentification forte
+            // A user has MFA if they have at least one strong authentication method
             const hasMFA = methods && methods.value && methods.value.length > 0;
             return { userId: user.id, hasMFA };
           } catch {
@@ -2935,7 +2935,7 @@ router.get("/security", verifyJWT, async (req, res) => {
         }
       });
       
-      // Estimer le total en extrapolant les résultats
+      // Estimate total by extrapolating results
       if (usersToCheck.length < usersData.value.length) {
         const sampleRate = mfaStats.usersWithMFA / usersToCheck.length;
         const estimatedWithMFA = Math.round(sampleRate * usersData.value.length);
@@ -2944,14 +2944,14 @@ router.get("/security", verifyJWT, async (req, res) => {
       }
       
       mfaStats.mfaRate = mfaStats.totalUsers > 0 ? Math.round((mfaStats.usersWithMFA / mfaStats.totalUsers) * 100) : 0;
-      // Logs réduits pour optimiser la synchronisation
+      // Reduced logging to optimize synchronization
     }
 
-    // Traiter les rôles administrateurs
+    // Process administrator roles
     const administrators = [];
 
     if (directoryRoles && directoryRoles.value) {
-      // Rôles importants à vérifier - liste étendue
+      // Important roles to check — extended list
       const importantRoles = [
         'Global Administrator',
         'Privileged Role Administrator',
@@ -3017,10 +3017,10 @@ router.get("/security", verifyJWT, async (req, res) => {
       }
     }
 
-    // Essayer une approche alternative si peu d'administrateurs trouvés
+    // Try an alternative approach when few administrators are found
     if (administrators.length < 5) {
       try {
-        // Utiliser l'API roleAssignments pour une approche plus directe
+        // Use the roleAssignments API for a more direct approach
         const roleAssignments = await callMicrosoftGraph('/roleManagement/directory/roleAssignments?$expand=principal&$top=200', accessToken).catch(() => null);
 
         if (roleAssignments && roleAssignments.value) {
@@ -3029,7 +3029,7 @@ router.get("/security", verifyJWT, async (req, res) => {
               const user = assignment.principal;
               const roleDefinition = assignment.roleDefinition;
 
-              // Vérifier si c'est un rôle administrateur
+              // Check whether this is an administrator role
               if (roleDefinition && roleDefinition.displayName) {
                 const isAdminRole = [
                   'Global Administrator', 'Privileged Role Administrator', 'User Administrator',
@@ -3065,7 +3065,7 @@ router.get("/security", verifyJWT, async (req, res) => {
       }
     }
 
-    // Statistiques sur les administrateurs
+    // Statistics on administrators
     const adminStats = {
       total: administrators.length,
       withMFA: administrators.filter(a => a.hasMFA).length,
@@ -3073,10 +3073,10 @@ router.get("/security", verifyJWT, async (req, res) => {
       mfaRate: administrators.length > 0 ? Math.round((administrators.filter(a => a.hasMFA).length / administrators.length) * 100) : 0
     };
 
-    // Sauvegarder les statistiques dans la base de données si clientId fourni
+    // Back up statistics in the database when clientId is provided
     if (clientId) {
       try {
-        // Calculer les statistiques des utilisateurs non-administrateurs
+        // Compute non-administrator user statistics
         const totalUsers = mfaStats.totalUsers;
         const totalAdmins = adminStats.total;
         const nonAdminUsers = Math.max(0, totalUsers - totalAdmins);
@@ -3084,7 +3084,7 @@ router.get("/security", verifyJWT, async (req, res) => {
         const adminMfaCount = adminStats.withMFA;
         const userMfaCount = Math.max(0, mfaStats.usersWithMFA - adminMfaCount);
 
-        // Sauvegarder ou mettre à jour les statistiques
+        // Back up or update statistics
         await pool.query(`
           INSERT INTO v_b_clients_c_azure_stats (
             client_id,
@@ -3116,12 +3116,12 @@ router.get("/security", verifyJWT, async (req, res) => {
         ]);
 
       } catch (dbError) {
-        console.error('Erreur lors de la sauvegarde des statistiques Azure:', dbError);
-        // Ne pas bloquer l'API si la sauvegarde échoue
+        console.error('Error saving Azure statistics:', dbError);
+        // Do not block the API if persistence fails
       }
     }
 
-    // Analyser les connexions suspectes
+    // Analyser connections suspectes
     const suspiciousConnections = {
       newLocations: [],
       newDevices: [],
@@ -3166,7 +3166,7 @@ router.get("/security", verifyJWT, async (req, res) => {
           });
         }
         
-        // Tentatives échouées
+        // Tentatives failedes
         if (!isSuccessful && signIn.status?.errorCode >= 50000) {
           suspiciousConnections.failedAttempts.push({
             user: signIn.userDisplayName || userId,
@@ -3179,13 +3179,13 @@ router.get("/security", verifyJWT, async (req, res) => {
         }
       });
       
-      // Limiter à 20 par catégorie
+      // Limit to 20 per category
       suspiciousConnections.newLocations = suspiciousConnections.newLocations.slice(0, 20);
       suspiciousConnections.newDevices = suspiciousConnections.newDevices.slice(0, 20);
       suspiciousConnections.failedAttempts = suspiciousConnections.failedAttempts.slice(0, 20);
     }
 
-    // Traiter les risques d'authentification
+    // Process authentication risks
     const authenticationRisks = [];
     if (riskDetections && riskDetections.value) {
       riskDetections.value.forEach(risk => {
@@ -3201,29 +3201,29 @@ router.get("/security", verifyJWT, async (req, res) => {
       });
     }
 
-    // Récupérer les politiques de conformité (si disponibles)
-    // Certains endpoints nécessitent des permissions élevées (Security.Read.All). Pour éviter les erreurs 401,
-    // on n'appelle plus ces endpoints si les permissions ne sont pas garanties.
+    // Fetch compliance policies (if available)
+    // Some endpoints require elevated permissions (Security.Read.All). To avoid 401 errors,
+    // Do not call these endpoints unless permissions are guaranteed.
     const compliance = {
       retentionPolicies: []
     };
 
-    // Secure Score - Filtrer pour Microsoft 365 Defender et Entra ID
+    // Secure Score — filter for Microsoft 365 Defender and Entra ID
     let secureScoreData = null;
     let defenderSecureScoreData = null;
     let secureScoreHistoryData = [];
     
     if (secureScores && secureScores.value && secureScores.value.length > 0) {
       const providers = [...new Set(secureScores.value.map(s => s.vendorInformation?.provider || 'null'))];
-      // Séparer les scores par provider
-      // Le Secure Score Entra ID peut avoir différents providers : Microsoft, AzureActiveDirectory, SecureScore, ou null
+      // Separate scores by provider
+      // Entra ID Secure Score may use different providers: Microsoft, AzureActiveDirectory, SecureScore, or null
       const entraIDScores = secureScores.value.filter(score => {
         const provider = score.vendorInformation?.provider || '';
-        // Exclure explicitement Microsoft 365 Defender
+        // Explicitly exclude Microsoft 365 Defender
         if (provider === "Microsoft365Defender" || provider === "Microsoft Defender for Office 365") {
           return false;
         }
-        // Inclure tous les autres (Microsoft, AzureActiveDirectory, SecureScore, null, etc.)
+        // Include all other providers (Microsoft, AzureActiveDirectory, SecureScore, null, etc.)
         return true;
       });
       
@@ -3231,7 +3231,7 @@ router.get("/security", verifyJWT, async (req, res) => {
         score.vendorInformation?.provider === "Microsoft365Defender" ||
         score.vendorInformation?.provider === "Microsoft Defender for Office 365"
       );
-      // Traiter le Secure Score Entra ID (Identity)
+      // Process Entra ID Secure Score (Identity)
       let entraIDScoreId = null;
       if (entraIDScores.length > 0) {
         const latestEntraScore = entraIDScores.sort((a, b) => {
@@ -3257,7 +3257,7 @@ router.get("/security", verifyJWT, async (req, res) => {
       } else {
       }
       
-      // Traiter le Microsoft 365 Defender Secure Score
+      // Process Microsoft 365 Defender Secure Score
       if (defenderScores.length > 0) {
         const latestDefenderScore = defenderScores.sort((a, b) => {
           const dateA = new Date(a.createdDateTime || 0);
@@ -3275,7 +3275,7 @@ router.get("/security", verifyJWT, async (req, res) => {
           vendorInformation: latestDefenderScore.vendorInformation || null
         };
         
-        // Construire l'historique du score (30 derniers jours)
+        // Build score history (last 30 days)
         if (secureScoreHistory && secureScoreHistory.value) {
           const defenderHistory = secureScoreHistory.value
             .filter(score => 
@@ -3285,7 +3285,7 @@ router.get("/security", verifyJWT, async (req, res) => {
             .sort((a, b) => {
               const dateA = new Date(a.createdDateTime || 0);
               const dateB = new Date(b.createdDateTime || 0);
-              return dateA - dateB; // Ordre chronologique
+              return dateA - dateB; // Chronological order
             })
             .map(score => ({
               date: score.createdDateTime,
@@ -3301,10 +3301,10 @@ router.get("/security", verifyJWT, async (req, res) => {
 
     const secureScoreRecommendations = mapSecureScoreProfilesToRecommendations(secureScoreProfiles);
 
-    // Récupérer les détails d'inscription MFA pour tous les utilisateurs
+    // Fetch MFA enrollment details for all users
     let userMfaDetails = [];
     if (usersData && usersData.value && usersData.value.length > 0) {
-      const usersToCheck = usersData.value; // Récupérer TOUS les utilisateurs
+      const usersToCheck = usersData.value; // Check all users
 
       const mfaDetailsPromises = usersToCheck.map(async (user) => {
         try {
@@ -3326,11 +3326,11 @@ router.get("/security", verifyJWT, async (req, res) => {
             });
           }
 
-          // Trouver la date de dernière inscription MFA (date la plus récente)
-          // UNIQUEMENT si l'utilisateur a au moins une vraie méthode MFA
+          // Find the latest MFA enrollment date (most recent)
+          // ONLY if the user has at least one real MFA method
           let lastMfaEnrollmentDate = null;
           if (methodDetails.length > 0) {
-            // Filtrer seulement les vraies méthodes MFA (pas password, pas windows hello)
+            // Filter to real MFA methods only (not password or Windows Hello)
             const realMfaMethods = methodDetails.filter(method =>
               method.type === 'emailauthenticationmethod' ||
               method.type === 'softwareoathauthenticationmethod' ||
@@ -3338,7 +3338,7 @@ router.get("/security", verifyJWT, async (req, res) => {
               method.type === 'microsoftauthenticatorauthenticationmethod'
             );
 
-            // Si l'utilisateur a au moins une vraie MFA, prendre la date la plus récente
+            // If the user has real MFA, take the most recent date
             if (realMfaMethods.length > 0) {
               const sortedMethods = realMfaMethods
                 .filter(method => method.createdDateTime)
@@ -3350,8 +3350,8 @@ router.get("/security", verifyJWT, async (req, res) => {
             }
           }
 
-          // Une vraie MFA c'est soit email, software, phone, ou authenticator
-          // Exclure le mot de passe et autres méthodes non-MFA ; dédupliquer les types
+          // Real MFA is email, software, phone, or Microsoft Authenticator
+          // Exclude password and other non-MFA methods; deduplicate types
           const mfaMethods = [...new Set(methodTypes)].filter(type =>
             type === 'emailauthenticationmethod' ||
             type === 'softwareoathauthenticationmethod' ||
@@ -3388,17 +3388,17 @@ router.get("/security", verifyJWT, async (req, res) => {
 
     }
 
-    // Sauvegarder les données en base si clientId fourni
+    // Back up data in the database when clientId is provided
     if (clientId) {
       try {
-        // Calculer et sauvegarder les statistiques des méthodes MFA
+        // Compute and save MFA method statistics
         try {
           let emailMfaCount = 0;
           let softwareMfaCount = 0;
           let phoneMfaCount = 0;
           let authenticatorMfaCount = 0;
 
-          // Analyser les méthodes MFA des utilisateurs récupérés
+          // Analyze MFA methods for fetched users
           userMfaDetails.forEach(userDetail => {
             if (userDetail.mfaMethods && Array.isArray(userDetail.mfaMethods)) {
               if (userDetail.mfaMethods.includes('emailauthenticationmethod')) emailMfaCount++;
@@ -3439,20 +3439,20 @@ router.get("/security", verifyJWT, async (req, res) => {
           ]);
 
         } catch (mfaStatsError) {
-          console.error('Erreur lors de la sauvegarde des statistiques MFA:', mfaStatsError);
+          console.error('Error saving MFA statistics:', mfaStatsError);
         }
 
-        // Sauvegarder les détails des utilisateurs MFA
+        // Back up MFA user details
         try {
 
 
           let adminCount = 0;
           for (const userDetail of userMfaDetails) {
-            // Collecter tous les rôles admin de l'utilisateur (matching avec la liste des administrateurs)
+            // Collect all admin roles for the user (match against administrator list)
             const adminRoles = [];
 
             for (const admin of administrators) {
-              // Correspondance stricte : identifiant Azure AD (id) ou UPN exact uniquement
+              // Strict match: Azure AD identifier (id) or exact UPN only
               const userUpn = (userDetail.userPrincipalName || '').toLowerCase().trim();
               const adminEmail = (admin.email || '').toLowerCase().trim();
               const matchById = admin.id && userDetail.id && String(admin.id) === String(userDetail.id);
@@ -3499,7 +3499,7 @@ router.get("/security", verifyJWT, async (req, res) => {
               userDetail.id,
               userDetail.displayName,
               userDetail.userPrincipalName,
-              true, // accountEnabled par défaut
+              true, // accountEnabled by default
               userDetail.hasMFA,
               JSON.stringify(userDetail.mfaMethods || []),
               userDetail.lastMfaEnrollmentDate,
@@ -3509,11 +3509,11 @@ router.get("/security", verifyJWT, async (req, res) => {
           }
 
         } catch (userDetailsError) {
-          console.error('Erreur lors de la sauvegarde des détails utilisateurs:', userDetailsError);
+          console.error('Error saving user details:', userDetailsError);
         }
       } catch (dbError) {
-        console.error('Erreur lors de la sauvegarde en base:', dbError);
-        // Ne pas bloquer l'API si la sauvegarde échoue
+        console.error('Error saving to database:', dbError);
+        // Do not block the API if persistence fails
       }
     }
 
@@ -3528,7 +3528,7 @@ router.get("/security", verifyJWT, async (req, res) => {
       compliance: compliance,
       secureScore: secureScoreData, // Entra ID Secure Score
       defenderSecureScore: defenderSecureScoreData, // Microsoft 365 Defender Secure Score
-      secureScoreHistory: secureScoreHistoryData, // Historique du score
+      secureScoreHistory: secureScoreHistoryData, // History score
       secureScoreRecommendations: secureScoreRecommendations
     });
   } catch (error) {
@@ -3541,7 +3541,7 @@ router.get("/security", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/applications
- * Récupère les données d'utilisation des applications Microsoft 365
+ * Fetch Microsoft 365 application usage data
  */
 router.get("/applications", verifyJWT, async (req, res) => {
   try {
@@ -3576,15 +3576,15 @@ router.get("/applications", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Toujours utiliser D90 pour récupérer le maximum de données, puis filtrer selon les dates du rapport
+    // Always use D90 to fetch maximum data, then filter by report dates
     const period = 'D90';
     const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
     const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
     
-    // Récupérer les données d'utilisation des applications
-    // Utiliser getOffice365ServicesUserCounts pour obtenir les utilisateurs par service (plus fiable)
+    // Fetch application usage data
+    // Use getOffice365ServicesUserCounts to get users per service (more reliable)
     const [office365Apps, outlookApps, teamsApps, onedriveApps, sharepointApps, servicePrincipals, activeUserCounts, servicesUserCounts] = await Promise.all([
-      // getOffice365ActiveUserDetail pour les détails d'activation Word/Excel/PowerPoint
+      // getOffice365ActiveUserDetail for details activation Word/Excel/PowerPoint
       callMicrosoftGraph(`/reports/getOffice365ActiveUserDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
       callMicrosoftGraph(`/reports/getEmailAppUsageUserDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
       callMicrosoftGraph(`/reports/getTeamsUserActivityUserDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
@@ -3592,14 +3592,14 @@ router.get("/applications", verifyJWT, async (req, res) => {
       callMicrosoftGraph(`/reports/getSharePointActivityUserDetail(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
       // Applications tierces (service principals)
       callMicrosoftGraph("/servicePrincipals?$select=id,displayName,appId,servicePrincipalType,appDisplayName&$filter=servicePrincipalType eq 'Application'", accessToken, { getAllPages: true }).catch(() => null),
-      // Nombre d'utilisateurs actifs par jour
+      // Active users per day
       callMicrosoftGraph(`/reports/getOffice365ActiveUserCounts(period='${period}')`, accessToken, { isReport: true }).catch(() => null),
-      // Nombre d'utilisateurs par service par jour (Word, Excel, PowerPoint, Outlook, Teams, OneDrive, SharePoint)
+      // Users per service per day (Word, Excel, PowerPoint, Outlook, Teams, OneDrive, SharePoint)
       callMicrosoftGraph(`/reports/getOffice365ServicesUserCounts(period='${period}')`, accessToken, { isReport: true }).catch(() => null)
     ]);
 
-    // Traiter les données d'utilisation
-    // Utiliser getOffice365ServicesUserCounts comme source principale pour les utilisateurs par service
+    // Process usage data
+    // Use getOffice365ServicesUserCounts as the primary source for users per service
     const appUsage = {
       word: { users: 0, activations: 0 },
       excel: { users: 0, activations: 0 },
@@ -3610,7 +3610,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
       sharepoint: { users: 0, activations: 0 }
     };
 
-    // Utiliser servicesUserCounts pour obtenir les utilisateurs uniques par service sur la période
+    // Use servicesUserCounts for unique users per service over the period
     if (servicesUserCounts && servicesUserCounts.value) {
       let filteredServiceCounts = servicesUserCounts.value;
       if (startDate && endDate) {
@@ -3629,7 +3629,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
         });
       }
 
-      // Calculer les utilisateurs uniques par service (maximum sur la période)
+      // Compute unique users per service (maximum over the period)
       const serviceMaxUsers = {
         'Microsoft Word': 0,
         'Microsoft Excel': 0,
@@ -3645,7 +3645,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
         const activeUsers = parseInt(entry['Active Users Count'] || entry['ActiveUsersCount'] || entry.activeUsers || 0);
         
         if (serviceName && activeUsers > 0) {
-          // Normaliser le nom du service
+          // Normalize service name
           const normalizedService = serviceName.toLowerCase();
           if (normalizedService.includes('word')) {
             serviceMaxUsers['Microsoft Word'] = Math.max(serviceMaxUsers['Microsoft Word'], activeUsers);
@@ -3674,10 +3674,10 @@ router.get("/applications", verifyJWT, async (req, res) => {
       appUsage.sharepoint.users = serviceMaxUsers['SharePoint'];
     }
 
-    // Utiliser les rapports détaillés pour les activations (Word, Excel, PowerPoint)
+    // Use detailed reports for activations (Word, Excel, PowerPoint)
     if (office365Apps && office365Apps.value) {
       office365Apps.value.forEach(user => {
-        // Essayer différentes variantes de noms de colonnes
+        // Try different column name variants
         const wordActivated = parseInt(user['Word Activated'] || user['WordActivated'] || user['Word Activated Count'] || user['WordActivatedCount'] || 0);
         const excelActivated = parseInt(user['Excel Activated'] || user['ExcelActivated'] || user['Excel Activated Count'] || user['ExcelActivatedCount'] || 0);
         const powerpointActivated = parseInt(user['PowerPoint Activated'] || user['PowerPointActivated'] || user['PowerPoint Activated Count'] || user['PowerPointActivatedCount'] || 0);
@@ -3688,7 +3688,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
       });
     }
 
-    // Utiliser les rapports détaillés comme fallback si servicesUserCounts n'est pas disponible
+    // Use detailed reports as fallback when servicesUserCounts is unavailable
     if (appUsage.outlook.users === 0 && outlookApps && outlookApps.value) {
       const outlookUsers = new Set();
       outlookApps.value.forEach(user => {
@@ -3735,8 +3735,8 @@ router.get("/applications", verifyJWT, async (req, res) => {
       appUsage.sharepoint.users = sharepointUsers.size;
     }
 
-    // Traiter les données quotidiennes pour les graphiques
-    // Nombre d'utilisateurs par app par jour - utiliser getOffice365ServicesUserCounts
+    // Process daily data for charts
+    // Users per app per day — use getOffice365ServicesUserCounts
     const usersByAppDaily = [];
     if (servicesUserCounts && servicesUserCounts.value) {
       let filteredServiceCounts = servicesUserCounts.value;
@@ -3756,7 +3756,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
         });
       }
       
-      // Grouper par date et service
+      // Group by date and service
       const dailyData = {};
       filteredServiceCounts.forEach(entry => {
         const reportDate = entry['Report Date'] || entry['ReportDate'] || entry.date || '';
@@ -3775,7 +3775,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
           };
         }
         
-        // Les colonnes sont : "Service Name", "Active Users Count"
+        // The columns are: "Service Name", "Active Users Count"
         const serviceName = (entry['Service Name'] || entry['ServiceName'] || entry.serviceName || '').toLowerCase();
         const activeUsers = parseInt(entry['Active Users Count'] || entry['ActiveUsersCount'] || entry.activeUsers || 0);
         
@@ -3804,7 +3804,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
       });
     }
     
-    // Nombre d'utilisateurs par plateforme par jour
+    // Users per platform per day
     const usersByPlatformDaily = [];
     if (servicesUserCounts && servicesUserCounts.value) {
       let filteredServiceCounts = servicesUserCounts.value;
@@ -3824,7 +3824,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
         });
       }
       
-      // Grouper par date et plateforme
+      // Group by date and platform
       const dailyPlatformData = {};
       filteredServiceCounts.forEach(entry => {
         const reportDate = entry['Report Date'] || entry['ReportDate'] || entry.date || '';
@@ -3841,7 +3841,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
           };
         }
         
-        // Les colonnes peuvent être : "Platform", "Active Users Count", etc.
+        // Columns may be: "Platform", "Active Users Count", etc.
         const platform = (entry['Platform'] || entry.platform || '').toLowerCase();
         const activeUsers = parseInt(entry['Active Users Count'] || entry['ActiveUsersCount'] || entry.activeUsers || 0);
         
@@ -3865,7 +3865,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
     res.json({
       success: true,
       applications: appUsage,
-      // Données quotidiennes pour les graphiques
+      // Daily data for charts
       dailyUsersByApp: usersByAppDaily,
       dailyUsersByPlatform: usersByPlatformDaily,
       lastUpdate: new Date().toISOString()
@@ -3880,7 +3880,7 @@ router.get("/applications", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/alerts
- * Récupère les alertes et problèmes Office 365
+ * Fetch Office 365 alerts and issues
  */
 router.get("/alerts", verifyJWT, async (req, res) => {
   try {
@@ -3915,13 +3915,13 @@ router.get("/alerts", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Récupérer les alertes de sécurité et l'état des services
+    // Fetch security alerts and service health status
     const [securityAlerts, serviceHealth, auditLogs] = await Promise.all([
-      // Alertes de sécurité (si disponible)
+      // Security alerts (when available)
       callMicrosoftGraph("/security/alerts?$top=50&$orderby=createdDateTime desc", accessToken).catch(() => null),
-      // État de santé des services
+      // Service health status
       callMicrosoftGraph("/admin/serviceAnnouncement/healthOverviews", accessToken).catch(() => null),
-      // Journaux d'audit pour détecter les activités suspectes
+      // Audit logs to detect suspicious activity
       callMicrosoftGraph("/auditLogs/signIns?$top=100&$orderby=createdDateTime desc", accessToken).catch(() => null)
     ]);
 
@@ -3931,7 +3931,7 @@ router.get("/alerts", verifyJWT, async (req, res) => {
       critical: []
     };
 
-    // Traiter les alertes de sécurité
+    // Process security alerts
     if (securityAlerts && securityAlerts.value) {
       securityAlerts.value.forEach(alert => {
         alerts.security.push({
@@ -3955,7 +3955,7 @@ router.get("/alerts", verifyJWT, async (req, res) => {
       });
     }
 
-    // Traiter l'état de santé des services
+    // Process service health status
     if (serviceHealth && serviceHealth.value) {
       serviceHealth.value.forEach(service => {
         if (service.status !== 'serviceOperational') {
@@ -3977,10 +3977,10 @@ router.get("/alerts", verifyJWT, async (req, res) => {
       });
     }
 
-    // Détecter les activités suspectes dans les journaux d'audit
+    // Detect suspicious activity in audit logs
     if (auditLogs && auditLogs.value) {
       const suspiciousActivities = auditLogs.value.filter(log => {
-        // Détecter les connexions depuis de nouveaux emplacements ou échecs multiples
+        // Detect sign-ins from new locations or multiple failures
         return log.riskLevel === 'high' || 
                log.riskLevel === 'medium' ||
                (log.status && log.status.errorCode && parseInt(log.status.errorCode) >= 50000);
@@ -3998,7 +3998,7 @@ router.get("/alerts", verifyJWT, async (req, res) => {
       });
     }
 
-    // Statistiques
+    // Statistics
     const stats = {
       totalSecurity: alerts.security.length,
       totalServiceIssues: alerts.serviceHealth.length,
@@ -4022,32 +4022,32 @@ router.get("/alerts", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/stats/saved/:clientId
- * Récupère les statistiques Azure sauvegardées pour un client
+ * Fetch saved Azure statistics for a client
  */
 router.get("/stats/saved/:clientId", verifyJWT, async (req, res) => {
   try {
     const { clientId } = req.params;
 
-    // Calculer les statistiques directement depuis v_b_clients_c_azure_mfa
+    // Compute statistics directly from v_b_clients_c_azure_mfa
     const result = await pool.query(`
       SELECT
-        -- Comptages totaux
+        -- Total counts
         COUNT(*) as total_users,
         COUNT(CASE WHEN is_admin = true THEN 1 END) as admin_count,
         COUNT(CASE WHEN is_admin IS NULL OR is_admin = false THEN 1 END) as regular_user_count,
 
-        -- MFA par type d'utilisateur (utilise la colonne has_mfa corrigée)
+        -- MFA by user type (uses the corrected has_mfa column)
         COUNT(CASE WHEN has_mfa = true THEN 1 END) as users_with_mfa,
         COUNT(CASE WHEN has_mfa = true AND is_admin = true THEN 1 END) as admins_with_mfa,
         COUNT(CASE WHEN has_mfa = true AND (is_admin IS NULL OR is_admin = false) THEN 1 END) as regular_users_with_mfa,
 
-        -- Méthodes MFA détaillées (pour utilisateurs ayant has_mfa = true)
+        -- Detailed MFA methods (for users with has_mfa = true)
         COUNT(CASE WHEN has_mfa = true AND mfa_methods ? 'emailauthenticationmethod' THEN 1 END) as email_mfa_count,
         COUNT(CASE WHEN has_mfa = true AND mfa_methods ? 'softwareoathauthenticationmethod' THEN 1 END) as software_mfa_count,
         COUNT(CASE WHEN has_mfa = true AND mfa_methods ? 'phoneauthenticationmethod' THEN 1 END) as phone_mfa_count,
         COUNT(CASE WHEN has_mfa = true AND mfa_methods ? 'microsoftauthenticatorauthenticationmethod' THEN 1 END) as authenticator_mfa_count,
 
-        -- Debug: comptage des valeurs nulles
+        -- Debug: count null values
         COUNT(CASE WHEN is_admin IS NULL THEN 1 END) as null_admin_count,
         COUNT(CASE WHEN has_mfa IS NULL THEN 1 END) as null_mfa_count,
         COUNT(CASE WHEN has_mfa = false THEN 1 END) as false_mfa_count,
@@ -4075,12 +4075,12 @@ router.get("/stats/saved/:clientId", verifyJWT, async (req, res) => {
     const adminsWithMfa = parseInt(data.admins_with_mfa);
     const regularUsersWithMfa = parseInt(data.regular_users_with_mfa);
 
-    // Calculer les pourcentages pour tous les utilisateurs
+    // Compute percentages for all users
     const userMfaPercentage = totalUsers > 0 ? Math.round((usersWithMfa / totalUsers) * 100) : 0;
     const adminMfaPercentage = adminCount > 0 ? Math.round((adminsWithMfa / adminCount) * 100) : 0;
     const regularUserMfaPercentage = regularUserCount > 0 ? Math.round((regularUsersWithMfa / regularUserCount) * 100) : 0;
 
-    // Calculer les pourcentages pour les méthodes MFA (par rapport au total des utilisateurs)
+    // Compute MFA method percentages (relative to total users)
     const emailMfaPercentage = totalUsers > 0 ? Math.round((parseInt(data.email_mfa_count) / totalUsers) * 100) : 0;
     const softwareMfaPercentage = totalUsers > 0 ? Math.round((parseInt(data.software_mfa_count) / totalUsers) * 100) : 0;
     const phoneMfaPercentage = totalUsers > 0 ? Math.round((parseInt(data.phone_mfa_count) / totalUsers) * 100) : 0;
@@ -4090,14 +4090,14 @@ router.get("/stats/saved/:clientId", verifyJWT, async (req, res) => {
       success: true,
       stats: {
         admin_count: adminCount,
-        user_count: totalUsers, // Total incluant admins et utilisateurs
+        user_count: totalUsers, // Total including admins and regular users
         admin_mfa_count: adminsWithMfa,
-        user_mfa_count: usersWithMfa, // Tous les utilisateurs avec MFA
+        user_mfa_count: usersWithMfa, // All users with MFA
         admin_mfa_percentage: adminMfaPercentage,
-        user_mfa_percentage: userMfaPercentage, // Pourcentage MFA sur tous les utilisateurs
-        regular_user_count: regularUserCount, // Utilisateurs réguliers (non-admins)
-        regular_user_mfa_count: regularUsersWithMfa, // Utilisateurs réguliers avec MFA
-        regular_user_mfa_percentage: regularUserMfaPercentage, // Pourcentage MFA sur utilisateurs réguliers
+        user_mfa_percentage: userMfaPercentage, // MFA percentage across all users
+        regular_user_count: regularUserCount, // Regular users (non-admins)
+        regular_user_mfa_count: regularUsersWithMfa, // Regular users with MFA
+        regular_user_mfa_percentage: regularUserMfaPercentage, // MFA percentage among regular users
         email_mfa_count: parseInt(data.email_mfa_count),
         software_mfa_count: parseInt(data.software_mfa_count),
         phone_mfa_count: parseInt(data.phone_mfa_count),
@@ -4119,13 +4119,13 @@ router.get("/stats/saved/:clientId", verifyJWT, async (req, res) => {
 
 /**
  * GET /api/office365/mfa-details/:clientId
- * Récupère les détails MFA de tous les utilisateurs du tenant
+ * Fetch MFA details for all tenant users
  */
 router.get("/mfa-details/:clientId", verifyJWT, async (req, res) => {
   try {
     const { clientId } = req.params;
 
-    // Récupérer les détails MFA depuis la base de données
+    // Fetch MFA details from saved database data
     const result = await pool.query(`
       SELECT
         user_id as id,
@@ -4151,7 +4151,7 @@ router.get("/mfa-details/:clientId", verifyJWT, async (req, res) => {
       });
     }
 
-    // Transformer les données pour maintenir la compatibilité avec l'ancien format
+    // Transform data to maintain compatibility with the legacy format
     const userMfaDetails = result.rows.map(row => ({
       id: row.id,
       displayName: row.display_name,
@@ -4177,8 +4177,8 @@ router.get("/mfa-details/:clientId", verifyJWT, async (req, res) => {
 });
 
 /**
- * Fonction helper pour récupérer les données principales (licences, users, adoptionScore)
- * Réutilise la logique de la route /data
+ * Helper to fetch core data (licenses, users, adoptionScore)
+ * Reuses the logic from the /data route
  */
 async function fetchOffice365DataInternal(clientId, credentials) {
   try {
@@ -4188,7 +4188,7 @@ async function fetchOffice365DataInternal(clientId, credentials) {
       credentials.clientSecret
     );
 
-    // Récupérer les licences, utilisateurs, rapport d'activité et sign-ins (fallback pour lastLoginDate)
+    // Fetch licenses, users, activity report, and sign-ins (fallback for lastLoginDate)
     const [subscribedSkus, usersData, activeUsersReport, signInsData] = await Promise.all([
       callMicrosoftGraph("/subscribedSkus", accessToken),
       callMicrosoftGraph("/users?$select=id,displayName,mail,userPrincipalName,jobTitle,department,assignedLicenses,signInActivity,accountEnabled,createdDateTime", accessToken, { getAllPages: true }).catch(err => {
@@ -4198,13 +4198,13 @@ async function fetchOffice365DataInternal(clientId, credentials) {
       callMicrosoftGraph("/auditLogs/signIns?$top=2000&$orderby=createdDateTime desc", accessToken).catch(() => null)
     ]);
 
-    // Créer un mapping des SKU IDs vers les noms de licences
+    // Create a mapping from SKU IDs to license names
     const skuIdToName = {};
     subscribedSkus.value.forEach(sku => {
       skuIdToName[sku.skuId] = sku.skuPartNumber || sku.displayName || "Licence inconnue";
     });
 
-    // Transformer les licences
+    // Transform licenses
     const licences = subscribedSkus.value
       .filter(sku => {
         const total = sku.prepaidUnits?.enabled || 0;
@@ -4226,7 +4226,7 @@ async function fetchOffice365DataInternal(clientId, credentials) {
         };
       });
 
-    // Créer un mapping des emails/UPN vers la date de dernière connexion (rapport Office 365)
+    // Build an email/UPN to last sign-in date mapping (Office 365 report)
     const emailToLastLogin = {};
     const reportUpnKeys = ['User Principal Name', 'UserPrincipalName', 'User'];
     const reportDateKeys = ['Last Activity Date (UTC)', 'Last Activity Date', 'LastActivityDate'];
@@ -4253,7 +4253,7 @@ async function fetchOffice365DataInternal(clientId, credentials) {
       });
     }
 
-    // Fallback : dernière connexion depuis auditLogs/signIns (connexions réussies, ordre date desc = plus récent en premier)
+    // Fallback: last sign-in from auditLogs/signIns (successful sign-ins, date desc = most recent first)
     const signInToLastLogin = {};
     if (signInsData && signInsData.value && Array.isArray(signInsData.value)) {
       signInsData.value.forEach(signIn => {
@@ -4268,7 +4268,7 @@ async function fetchOffice365DataInternal(clientId, credentials) {
       });
     }
 
-    // Transformer les utilisateurs (garder lastLoginDate systématiquement)
+    // Transform users (always keep lastLoginDate)
     const usersList = Array.isArray(usersData?.value) ? usersData.value : [];
     const users = usersList.map(user => {
       const licenseNames = user.assignedLicenses
@@ -4285,7 +4285,7 @@ async function fetchOffice365DataInternal(clientId, credentials) {
         const upn = (user.userPrincipalName || '').toString().toLowerCase().trim();
         lastLoginDate = emailToLastLogin[userEmail] || emailToLastLogin[upn] || signInToLastLogin[userEmail] || signInToLastLogin[upn];
       }
-      // Normaliser en chaîne ISO ou null pour le frontend
+      // Normalize en string ISO or null for frontend
       if (lastLoginDate != null && lastLoginDate !== '') {
         const d = new Date(lastLoginDate);
         lastLoginDate = !isNaN(d.getTime()) ? d.toISOString() : null;
@@ -4311,9 +4311,9 @@ async function fetchOffice365DataInternal(clientId, credentials) {
       };
     });
 
-    // Traiter le score d'adoption
+    // Process adoption score
     let adoptionScoreData = null;
-    // Note: Le score d'adoption nécessite une API spécifique qui peut ne pas être disponible
+    // Note: adoption score requires a specific API that may not be available
 
     return {
       success: true,
@@ -4331,8 +4331,8 @@ async function fetchOffice365DataInternal(clientId, credentials) {
 }
 
 /**
- * Fonction helper pour récupérer les données Exchange complètes
- * Réutilise toute la logique de la route /exchange
+ * Helper to fetch full Exchange data
+ * Reuses all logic from the /exchange route
  */
 async function fetchExchangeDataInternal(accessToken, startDate, endDate, period = 'D90') {
   try {
@@ -4376,7 +4376,7 @@ async function fetchExchangeDataInternal(accessToken, startDate, endDate, period
           totalReceived += received;
           totalRead += read;
         }
-        // Graphique : toutes les dates disponibles (pas de filtre)
+        // Chart: all dates included (no filtering)
         dailyActivity.push({ date, sent, received, read });
       });
       
@@ -4681,8 +4681,8 @@ async function fetchExchangeDataInternal(accessToken, startDate, endDate, period
 }
 
 /**
- * Fonction helper pour récupérer les données Teams complètes
- * Réutilise toute la logique de la route /teams
+ * Helper to fetch full Teams data
+ * Reuses all logic from the /teams route
  */
 async function fetchTeamsDataInternal(accessToken, startDate, endDate, period = 'D90') {
   try {
@@ -4784,7 +4784,7 @@ async function fetchTeamsDataInternal(accessToken, startDate, endDate, period = 
           })
         );
       } catch {
-        // En cas d'erreur globale (ex. rate limit), laisser les maps vides → comptes à 0
+        // On global error (e.g. rate limit), leave maps empty → counts become 0
       }
     }
 
@@ -5086,7 +5086,7 @@ async function fetchTeamsDataInternal(accessToken, startDate, endDate, period = 
     };
 
     let dailyActivity = Array.from(dailyActivityMap.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
-    // Graphique : toutes les dates (pas de filtre)
+    // Chart: all dates (no filtering)
 
     const messagesStats = {
       total: teamChatMessages + privateChatMessages,
@@ -5172,8 +5172,8 @@ async function fetchTeamsDataInternal(accessToken, startDate, endDate, period = 
 }
 
 /**
- * Fonction helper pour récupérer les données OneDrive complètes
- * Réutilise toute la logique de la route /onedrive
+ * Helper to fetch full OneDrive data
+ * Reuses all logic from the /onedrive route
  */
 async function fetchOneDriveDataInternal(accessToken, startDate, endDate, period = 'D90') {
   try {
@@ -5355,8 +5355,8 @@ async function fetchOneDriveDataInternal(accessToken, startDate, endDate, period
 }
 
 /**
- * Construit la liste des administrateurs (avec rôle) puis sauvegarde les détails MFA
- * (dont admin_role) en base pour le client. Utilisé par /security (inline) et par /sync-all.
+ * Build the administrator list (with role) then persist MFA details
+ * (including admin_role) in the database for the client. Used by /security (inline) and /sync-all.
  */
 async function saveClientMfaDetailsWithAdminRoles(clientId, accessToken) {
   const importantRoles = [
@@ -5500,7 +5500,7 @@ async function saveClientMfaDetailsWithAdminRoles(clientId, accessToken) {
     for (const userDetail of userMfaDetails) {
       const adminRoles = [];
       for (const admin of administrators) {
-        // Correspondance stricte : identifiant Azure AD (id) ou UPN exact uniquement
+        // Strict match: Azure AD identifier (id) or exact UPN only
         const userUpn = (userDetail.userPrincipalName || '').toLowerCase().trim();
         const adminEmail = (admin.email || '').toLowerCase().trim();
         const matchById = admin.id && userDetail.id && String(admin.id) === String(userDetail.id);
@@ -5534,21 +5534,21 @@ async function saveClientMfaDetailsWithAdminRoles(clientId, accessToken) {
       ]);
     }
   } catch (err) {
-    console.error('Erreur sauvegarde MFA + rôles admin (sync):', err);
+    console.error('Failed to save MFA + rôles admin (sync):', err);
   }
 }
 
 /**
  * GET /api/office365/sync-all
- * Synchronise TOUTES les données Office 365 (data, exchange, teams, onedrive, sharepoint, security)
- * et les sauvegarde dans v_b_clients_m_o365
+ * Synchronizes TOUTES data Offithis 365 (data, exchange, teams, onedrive, sharepoint, security)
+ * and backup in v_b_clients_m_o365
  */
 router.get("/sync-all", verifyJWT, async (req, res) => {
   try {
     const clientId = req.query.clientId ? parseInt(req.query.clientId) : null;
     const startDate = req.query.startDate || null;
     const endDate = req.query.endDate || null;
-    const period = 'D90'; // Toujours D90 pour avoir le maximum de données
+    const period = 'D90'; // Toujours D90 for have maximum de data
 
     if (!clientId) {
       return res.status(400).json({
@@ -5557,9 +5557,9 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
       });
     }
 
-    // Récupérer les credentials depuis v_b_clients_azure pour ce client spécifique
-    // IMPORTANT: Ne PAS utiliser les settings globaux si un clientId est fourni
-    // pour éviter de mélanger les données entre différents clients
+    // Fetch credentials from v_b_clients_azure for this specific client
+    // IMPORTANT: Do not use global settings when a clientId is provided
+    // to avoid mixing data across different clients
     const credentials = await getClientOffice365Credentials(clientId);
     
     if (!credentials) {
@@ -5569,7 +5569,7 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
       });
     }
     
-    // Vérifier que les credentials sont valides
+    // Check that credentials are valides
     if (!credentials.tenantId || !credentials.clientId || !credentials.clientSecret) {
       return res.status(400).json({
         success: false,
@@ -5583,26 +5583,26 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
       credentials.clientSecret
     );
 
-    // Récupérer TOUTES les données en parallèle en appelant directement les fonctions internes
-    // Au lieu de faire des appels HTTP, on va réutiliser la logique directement
+    // Fetch ALL data in parallel by calling internal functions directly
+    // Instead of HTTP calls, reuse the logic directly
     
-    // 1. Données principales (licences, users, adoptionScore)
+    // 1. Data principa(licenses, users, adoptionScore)
     const dataResult = await fetchOffice365DataInternal(clientId, credentials);
 
-    // Préparer les dates pour le filtrage
+    // Prepare dates for filtering
     const startDateObj = startDate ? new Date(startDate) : null;
     const endDateObj = endDate ? new Date(endDate) : null;
 
-    // 2. Exchange - utiliser la fonction helper complète
+    // 2. Exchange — use the full helper function
     const exchangePromise = fetchExchangeDataInternal(accessToken, startDateObj, endDateObj, period);
 
-    // 3. Teams - utiliser la fonction helper complète
+    // 3. Teams — use the full helper function
     const teamsPromise = fetchTeamsDataInternal(accessToken, startDateObj, endDateObj, period);
 
-    // 4. OneDrive - utiliser la fonction helper complète
+    // 4. OneDrive — use the full helper function
     const onedrivePromise = fetchOneDriveDataInternal(accessToken, startDateObj, endDateObj, period);
 
-    // 5. SharePoint - réutiliser la logique de la route /sharepoint (simplifié)
+    // 5. SharePoint — reuse /sharepoint route logic (simplified)
     const sharepointPromise = (async () => {
       try {
         const [sharepointUsage, sharepointActivity, sites] = await Promise.all([
@@ -5630,7 +5630,7 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
       }
     })();
 
-    // 6. Security - réutiliser la logique de la route /security (simplifié)
+    // 6. Security — reuse /security route logic (simplified)
     const securityPromise = (async () => {
       try {
         const [mfaReport, directoryRoles, usersData, secureScores] = await Promise.all([
@@ -5640,7 +5640,7 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
           callMicrosoftGraph("/security/secureScores?$orderby=createdDateTime desc", accessToken, { getAllPages: true }).catch(() => null)
         ]);
 
-        // Traitement simplifié des données de sécurité
+        // Simplified security data processing
         const identitySecureScore = secureScores?.value?.find(score => score.controlCategory === 'Identity' || !score.controlCategory) || secureScores?.value?.[0];
         
         return {
@@ -5665,7 +5665,7 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
       }
     })();
 
-    // Attendre toutes les promesses (y compris récupération des rôles admin + sauvegarde MFA)
+    // Await all promises (including admin role fetch + MFA persistence)
     const [data, exchangeData, teamsData, onedriveData, sharepointData, securityData, mfaAdminSave] = await Promise.allSettled([
       Promise.resolve(dataResult),
       exchangePromise,
@@ -5676,7 +5676,7 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
       saveClientMfaDetailsWithAdminRoles(clientId, accessToken)
     ]);
 
-    // Extraire les résultats
+    // Extract results
     const dataFinal = data.status === 'fulfilled' ? data.value : { success: false, error: data.reason?.message };
     const exchangeFinal = exchangeData.status === 'fulfilled' ? exchangeData.value : { success: false, error: exchangeData.reason?.message };
     const teamsFinal = teamsData.status === 'fulfilled' ? teamsData.value : { success: false, error: teamsData.reason?.message };
@@ -5684,7 +5684,7 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
     const sharepointFinal = sharepointData.status === 'fulfilled' ? sharepointData.value : { success: false, error: sharepointData.reason?.message };
     const securityFinal = securityData.status === 'fulfilled' ? securityData.value : { success: false, error: securityData.reason?.message };
 
-    // Construire le snapshot complet
+    // Build snapshot complete
     const snapshotData = {
       tenantId: credentials.tenantId || null,
       licences: dataFinal.licences || [],
@@ -5698,9 +5698,9 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
       lastUpdate: new Date().toISOString()
     };
 
-    // Sauvegarder dans v_b_clients_m_o365
+    // Back up in v_b_clients_m_o365
     try {
-      // Supprimer uniquement les snapshots de CE client avec CE tenantId
+      // Delete only snapshots for this client and this tenantId
       await pool.query(
         `DELETE FROM v_b_clients_m_o365 
          WHERE client_id = $1 
@@ -5708,7 +5708,7 @@ router.get("/sync-all", verifyJWT, async (req, res) => {
         [clientId, credentials.tenantId || null]
       );
 
-      // Insérer le nouveau snapshot avec le clientId et tenantId corrects
+      // Insert the new snapshot with the correct clientId and tenantId
       await pool.query(
         `INSERT INTO v_b_clients_m_o365 (client_id, item_key, name, data, is_active)
          VALUES ($1, $2, $3, $4, $5)`,

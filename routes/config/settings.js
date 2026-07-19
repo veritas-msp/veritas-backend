@@ -1,23 +1,23 @@
 // ───────────────────────────────────────────────
-// 📦 Imports principaux
+// 📦 Main imports
 // ───────────────────────────────────────────────
 import express from 'express';         // Framework HTTP
-import { pool } from '../../database/db.js';       // Connexion PostgreSQL (pool partagé)
+import { pool } from '../../database/db.js';       // Shared PostgreSQL connection pool
 import { decryptSetting, encryptSettingValue } from '../../utils/settingsHelper.js';
 import verifyJWT from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/roles.js';
 
-const router = express.Router();       // Création du routeur Express
+const router = express.Router();       // Create Express router
 
 router.use(verifyJWT, requireRole('admin'));
 
 // ───────────────────────────────────────────────
-// ⚙️ GET / — Récupération de tous les paramètres
+// ⚙️ GET / — Fetch all settings
 // ───────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    // Récupère et déchiffre tous les paramètres
-    // Colonnes compatibles avec l'ancien schéma (sans created_at/updated_at éventuels)
+    // Fetch and decrypt all settings
+    // Columns compatible with legacy schema (without optional created_at/updated_at)
     const result = await pool.query('SELECT key, value, value_encrypted, value_iv, value_auth_tag, section FROM v_b_settings');
     const decrypted = result.rows.map((row) => ({
       ...row,
@@ -34,11 +34,11 @@ router.get('/', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// ⚙️ POST / — Création ou mise à jour d’un paramètre
+// ⚙️ POST / — Create or update a setting
 // ───────────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
-    // Récupère les champs nécessaires depuis le body
+    // Read required fields from the request body
     const { key, value, label, section } = req.body;
 
     const enc = encryptSettingValue(value);
@@ -56,7 +56,7 @@ router.post('/', async (req, res) => {
       [key, enc.value, label, section, enc.value_encrypted, enc.value_iv, enc.value_auth_tag]
     );
 
-    // Retourne un succès explicite
+    // Return explicit success
     res.status(200).json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Erreur interne (SQL)" });

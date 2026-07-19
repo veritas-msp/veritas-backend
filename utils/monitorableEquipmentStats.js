@@ -4,7 +4,7 @@ import { listEquipmentFamilies } from "./equipmentFamilies.js";
 const CHECKMK_MONITORED_WHERE =
   "checkmk_host_name IS NOT NULL AND btrim(checkmk_host_name) <> ''";
 
-/** Familles système surveillables — aligné sur clients.js + cartographie hexagonale. */
+/** System monitorable families — aligned with clients.js + hexagonal mapping. */
 export const SYSTEM_MONITORABLE_FAMILIES = [
   {
     key: "Ordinateurs",

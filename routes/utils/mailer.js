@@ -1,18 +1,20 @@
 // ───────────────────────────────────────────────
-// 📦 Imports principaux
+// 📦 Main imports
 // ───────────────────────────────────────────────
-import nodemailer from "nodemailer";   // Module d'envoi de mails
+import nodemailer from "nodemailer";   // Mail sending module
 import { getSettingsMap } from '../../utils/settingsHelper.js';
 
+const isProduction = () => process.env.NODE_ENV === "production";
+
 // ───────────────────────────────────────────────
-// 🔧 Fonction utilitaire : Récupérer les settings SMTP
+// 🔧 Utility function: fetch SMTP settings
 // ───────────────────────────────────────────────
 async function getSMTPSettings() {
   try {
     const settings = await getSettingsMap(['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS']);
     return {
       host: settings.SMTP_HOST || '',
-      port: Number(settings.SMTP_PORT) || 25,
+      port: Number(settings.SMTP_PORT) || 587,
       user: settings.SMTP_USER || '',
       pass: settings.SMTP_PASS || ''
     };
@@ -21,34 +23,57 @@ async function getSMTPSettings() {
   }
 }
 
+/** True when SMTP_HOST is set in settings. */
+export async function isSmtpConfigured() {
+  const smtpSettings = await getSMTPSettings();
+  return Boolean(smtpSettings?.host);
+}
+
+/**
+ * Nodemailer transporter that does not send — serializes the message to JSON.
+ * Used in non-production when SMTP is not configured yet.
+ */
+function createLogTransporter() {
+  return nodemailer.createTransport({ jsonTransport: true });
+}
+
 // ───────────────────────────────────────────────
-// 📬 Fonction pour créer le transporteur Nodemailer
-// Récupère les paramètres depuis la base de données
+// 📬 Create the Nodemailer transporter
+// Settings are loaded from the database
+// Aligné sur /api/email-test : SSL direct sur 465, STARTTLS sinon
+// Sans SMTP : mode journal en hors-prod (évite de bloquer forgot-password, etc.)
 // ───────────────────────────────────────────────
 export async function getTransporter() {
   const smtpSettings = await getSMTPSettings();
   if (!smtpSettings || !smtpSettings.host) {
-    throw new Error("Configuration SMTP manquante");
+    if (isProduction()) {
+      throw new Error("Configuration SMTP manquante");
+    }
+    console.warn(
+      "[mail] SMTP non configuré — mode journal (emails non envoyés). Configurez Paramètres → Email."
+    );
+    return createLogTransporter();
   }
 
+  const port = smtpSettings.port;
   return nodemailer.createTransport({
     host: smtpSettings.host,
-    port: smtpSettings.port,
-    secure: false,                       // false = STARTTLS, true = SSL/TLS direct
+    port,
+    secure: port === 465, // true = SSL/TLS direct (465), false = STARTTLS (587…)
     auth: smtpSettings.user ? {
       user: smtpSettings.user,
       pass: smtpSettings.pass
     } : undefined,
     tls: {
-      rejectUnauthorized: false          // Autorise les certificats auto-signés
+      rejectUnauthorized: false          // Allow self-signed certificates
     }
   });
 }
 
 // ───────────────────────────────────────────────
-// ✉️ Template HTML d'email VERITAS
-// `title` : affiché en en-tête du contenu
-// `content` : corps personnalisé injecté dans le mail
+// ✉️ VERITAS HTML email template
+// `title`: shown in the content header
+// `content`: custom body injected into the email
 // ───────────────────────────────────────────────
 export const veritasTemplate = ({ title, content }) => {
   return `

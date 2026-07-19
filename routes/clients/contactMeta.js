@@ -65,7 +65,7 @@ export async function fetchTagsByContactIdMap() {
     }
   } catch (err) {
     if (isMissingTableError(err)) {
-      console.warn("[contact-tags] tables absentes, étiquettes ignorées");
+      console.warn("[contact-tags] tables missing, tags skipped");
       return byContactId;
     }
     throw err;

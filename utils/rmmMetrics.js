@@ -1,7 +1,7 @@
 import { pool } from "../database/db.js";
 import { fetchGlobalRmmSettings } from "./rmmSettings.js";
 
-/** Identifiants métriques stockés en SMALLINT. */
+/** Metric identifiers stored as SMALLINT. */
 export const RMM_METRIC_ID = {
   DISK_USED_PCT: 1,
   UPDATES_PENDING: 2,
@@ -22,13 +22,13 @@ const METRIC_ID_TO_NAME = Object.fromEntries(
   Object.entries(RMM_METRIC_NAMES).map(([name, id]) => [String(id), name])
 );
 
-/** Échantillonnage par défaut ~1 h entre deux points (pas à chaque heartbeat). */
+/** Default sampling: ~1 h between two points (not on every heartbeat). */
 export const RMM_METRICS_SAMPLE_INTERVAL_MS_DEFAULT = 60 * 60 * 1000;
 
-/** Rétention par défaut : 2 ans. */
+/** Default retention: 2 years. */
 export const RMM_METRICS_RETENTION_DAYS_DEFAULT = 730;
 
-/** Variation disque par défaut (points) déclenchant un échantillon anticipé. */
+/** Default disk variation (percentage points) that triggers an early sample. */
 export const RMM_METRICS_DISK_DELTA_PCT_DEFAULT = 5;
 
 let lastRetentionRunAt = 0;
@@ -77,7 +77,7 @@ function parseDiskUsedPct(disk) {
 }
 
 /**
- * Extrait les échantillons compacts depuis l'inventaire heartbeat.
+ * Extracts compact samples from the heartbeat inventory.
  * @returns {{ metricId: number, dimId: number, value: number }[]}
  */
 export function extractRmmMetricSamples(inventory = {}, collectors = {}) {
@@ -234,7 +234,7 @@ export async function maybePurgeOldRmmMetrics(client = pool) {
 }
 
 /**
- * Enregistre les métriques depuis un heartbeat (échantillonnage configurable).
+ * Records metrics from a heartbeat (configurable sampling).
  */
 export async function recordRmmMetricsFromHeartbeat(agent, inventory, settings = {}) {
   if (!agent?.id || !inventory || typeof inventory !== "object") return { sampled: false };

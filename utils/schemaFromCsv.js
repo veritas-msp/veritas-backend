@@ -31,10 +31,11 @@ const COMPOSITE_PRIMARY_KEYS = {
   v_b_whatsapp_processed_messages: ["wa_message_id"],
 };
 
-/** Unique constraints absent du CSV (index créés après CREATE TABLE). */
+/** Unique constraints missing from the CSV (indexes created after CREATE TABLE). */
 const TABLE_UNIQUE_KEYS = {
   v_b_client_tags: ["label"],
   v_b_contract_module_options: ["module_key"],
+  v_b_equipment_monitoring_alerts: ["client_id", "equipment_id", "equipment_family"],
 };
 
 const RESERVED_COLUMNS = new Set(["end"]);

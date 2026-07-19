@@ -1,10 +1,10 @@
 // ───────────────────────────────────────────────
-// 📦 Point d'entrée Check MK - Routes consolidées
+// 📦 Check MK entry point — consolidated routes
 // ───────────────────────────────────────────────
 
 import express from 'express';
 
-// Importer tous les modules de routes
+// Import all module routes
 import mappingRouter from './mapping.js';
 import hostsRouter from './hosts.js';
 import servicesRouter from './services.js';
@@ -15,57 +15,63 @@ import notificationsRouter from './notifications.js';
 import reportPeriodRouter from './reportPeriod.js';
 import saveJobsSyncRouter from './saveJobsSync.js';
 import equipmentMonitoringSyncRouter from './equipmentMonitoringSync.js';
+import checkmkWebhookRouter from './webhook.js';
 
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 📍 Routes de Mapping
+// 📍 Mapping routes
 // ───────────────────────────────────────────────
 router.use('/', mappingRouter);
 
 // ───────────────────────────────────────────────
-// 🏠 Routes des Hôtes
+// ───────────────────────────────────────────────
 // ───────────────────────────────────────────────
 router.use('/', hostsRouter);
 
 // ───────────────────────────────────────────────
-// 📋 Routes des Services
+// 📋 Service routes
 // ───────────────────────────────────────────────
 router.use('/', servicesRouter);
 
 // ───────────────────────────────────────────────
-// 📊 Routes de Disponibilité
+// 📊 Availability routes
 // ───────────────────────────────────────────────
 router.use('/', availabilityRouter);
 
 // ───────────────────────────────────────────────
-// 📊 Routes des Métriques
+// 📊 Metrics routes
 // ───────────────────────────────────────────────
 router.use('/', metricsRouter);
 
 // ───────────────────────────────────────────────
-// 📊 Routes des Événements
+// 📊 Event routes
 // ───────────────────────────────────────────────
 router.use('/', eventsRouter);
 
 // ───────────────────────────────────────────────
-// 📧 Routes des Notifications
+// 📧 Notification routes
 // ───────────────────────────────────────────────
 router.use('/', notificationsRouter);
 
 // ───────────────────────────────────────────────
-// 📋 Période du rapport (événements + disponibilité pour la période uniquement)
+// ───────────────────────────────────────────────
 // ───────────────────────────────────────────────
 router.use('/', reportPeriodRouter);
 
 // ───────────────────────────────────────────────
-// 🔄 Sync jobs sauvegarde (last_backup_date, last_backup_duration depuis CheckMK)
+// 🔄 Sync backup jobs (last_backup_date, last_backup_duration from CheckMK)
 // ───────────────────────────────────────────────
 router.use('/', saveJobsSyncRouter);
 
 // ───────────────────────────────────────────────
-// 🔄 Sync monitoring équipement (persistance CheckMK pour EquipmentDetailPage)
+// 🔄 Sync monitoring data (persist CheckMK data for EquipmentDetailPage)
 // ───────────────────────────────────────────────
 router.use('/', equipmentMonitoringSyncRouter);
+
+// ───────────────────────────────────────────────
+// 📦 Check MK entry point — consolidated routes
+// ───────────────────────────────────────────────
+router.use('/', checkmkWebhookRouter);
 
 export default router;

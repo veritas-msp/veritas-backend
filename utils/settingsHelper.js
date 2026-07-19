@@ -1,7 +1,7 @@
 import { pool } from '../database/db.js';
 import { decrypt, encrypt } from './encryption.js';
 
-// Déchiffre une ligne de settings ; fallback sur value en clair si pas chiffrée.
+// Decrypts a settings row; falls back to plaintext value if not encrypted.
 export function decryptSetting(row) {
   if (row?.value_encrypted && row?.value_iv && row?.value_auth_tag) {
     try {
@@ -28,21 +28,21 @@ export async function getSettingsMap(keys = []) {
   return map;
 }
 
-// Enveloppe les champs chiffrés pour un INSERT/UPDATE
+// Wraps encrypted fields for INSERT/UPDATE
 export function encryptSettingValue(value) {
-  // Accepte null/undefined/chaîne vide sans tenter de chiffrer
+  // Accept null/undefined/empty string without attempting encryption
   if (value === undefined || value === null || value === '') {
     return { value: null, value_encrypted: null, value_iv: null, value_auth_tag: null };
   }
 
   const enc = encrypt(String(value));
-  // Sécurise au cas où encrypt retournerait null (ex: texte vide)
+  // Guard in case encrypt returns null (e.g. empty text)
   if (!enc) {
     return { value: null, value_encrypted: null, value_iv: null, value_auth_tag: null };
   }
 
   return {
-    value: null, // on ne stocke plus en clair
+    value: null, // do not store plaintext
     value_encrypted: enc.encrypted,
     value_iv: enc.iv,
     value_auth_tag: enc.authTag,

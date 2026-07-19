@@ -1,5 +1,5 @@
-// Helper pour transformer les données des nouvelles tables v_b_clients_m_* 
-// vers le format attendu par le frontend (modules, modules_monitoring, equipements)
+// Helper to transform raw v_b_clients_m_* table data
+// into the frontend format (modules, modules_monitoring, equipements)
 
 const MODULE_TABLES = {
   internet: "v_b_clients_m_internet",
@@ -22,10 +22,10 @@ const MODULE_TABLES = {
 };
 
 /**
- * Transforme les données brutes des nouvelles tables vers le format frontend
- * @param {Object} rawData - Données brutes depuis les tables v_b_clients_m_*
- * @param {Object} options - Options additionnelles
- * @param {boolean} options.azureHasCredentials - True si des credentials Entra (v_b_clients_azure) existent
+ * Transforms raw table data into frontend format
+ * @param {Object} rawData - Raw data from v_b_clients_m_* tables
+ * @param {Object} options - Additional options
+ * @param {boolean} options.azureHasCredentials - True when Entra credentials (v_b_clients_azure) exist
  * @returns {Object} - { modules, modules_monitoring, equipements }
  */
 export function transformClientModulesToFrontend(rawData, options = {}) {
@@ -51,7 +51,7 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
     Ordinateurs: [],
   };
 
-  // Mapping pour les équipements (pluriel pour Firewalls)
+  // Mapping for equipment (plural for Firewalls)
   const familyToEquipementKey = {
     internet: 'Internet',
     servers: 'Serveurs',
@@ -72,12 +72,12 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
     ordinateurs: 'Ordinateurs',
   };
 
-  // Mapping pour les modules de monitoring (singulier pour Firewall)
+  // Mapping for monitoring modules (singular for Firewall)
   const familyToMonitoringKey = {
     internet: 'Internet',
     servers: 'Serveurs',
     stockage: 'Stockage',
-    firewall: 'Firewall', // Singulier pour modules_monitoring
+    firewall: 'Firewall', // Singular for modules_monitoring
     switch: 'Switch',
     wifi: 'BorneWifi',
     alimentation: 'Alimentation',
@@ -94,33 +94,33 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
   };
 
   for (const [family, items] of Object.entries(rawData)) {
-    if (family === 'module') continue; // Déjà traité
+    if (family === 'module') continue; // Already handled
 
     const equipementKey = familyToEquipementKey[family];
     const monitoringKey = familyToMonitoringKey[family];
     if (!equipementKey || !monitoringKey) continue;
     
 
-    // Déterminer si le module de monitoring est activé
-    // Chercher un item qui est un flag d'activation (item_key ou name = nom du module)
+    // Determine whether the monitoring module is enabled
+    // Look for an activation flag item (item_key or name = module name)
     const monitoringItem = items.find(item => 
       (item.item_key === monitoringKey || item.item_key === equipementKey || 
        item.name === monitoringKey || item.name === equipementKey) && 
       (item.data?.enabled === true || item.is_active === true)
     );
     
-    // Si aucun flag trouvé, vérifier s'il y a des équipements réels (alors le module est actif)
+    // If no flag is found, check for real equipment rows (module is then considered active)
     if (monitoringItem) {
       modules_monitoring[monitoringKey] = true;
     } else {
-      // Vérifier s'il y a des équipements réels (pas juste des flags)
-      // Pour Antivirus, on doit aussi vérifier si l'item avec item_key="Antivirus" a des solutions
+      // Check for real equipment rows (not just flags)
+      // For Antivirus, also check whether the Antivirus item contains solutions
       const hasRealEquipments = items.some(item => {
         if (!item.data || Object.keys(item.data).length === 0) return false;
-        // Exclure les flags "enabled"
+        // Exclude enabled-only flags
         if (Object.keys(item.data).length === 1 && item.data.enabled === true) return false;
         
-        // Pour Antivirus : si l'item a item_key="Antivirus" mais contient des solutions, c'est un vrai équipement
+        // For Antivirus: item with item_key="Antivirus" but containing solutions is real equipment
         if (equipementKey === 'Antivirus' && 
             (item.item_key === monitoringKey || item.item_key === equipementKey ||
              item.name === monitoringKey || item.name === equipementKey)) {
@@ -129,7 +129,7 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
           if (hasSolutions || hasSolution) return true;
         }
         
-        // Exclure les items où item_key ou name correspond au nom du module (sauf si c'est Antivirus avec solutions, déjà traité ci-dessus)
+        // Exclude items whose item_key or name matches the module name (except Antivirus with solutions, handled above)
         if (item.item_key === monitoringKey || item.item_key === equipementKey ||
             item.name === monitoringKey || item.name === equipementKey) return false;
         return true;
@@ -137,98 +137,98 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
       modules_monitoring[monitoringKey] = hasRealEquipments;
     }
 
-    // Extraire les équipements
+    // Extract equipment data
     if (equipementKey === 'Sauvegarde') {
-      // Sauvegarde : agréger toutes les instances individuelles en un objet avec instances: []
-      // Filtrer les items qui sont de vraies instances (ont un logiciel) ou qui contiennent instances: []
-      // OU qui sont des jobs (item_key commence par 'job-')
+      // Backup: aggregate individual instances into an object with instances: []
+      // Filter items that are real instances (have logiciel) or contain instances: []
+      // Or jobs (item_key starts with 'job-')
       const realItems = items.filter(item => {
         if (!item.data || typeof item.data !== 'object') return false;
         
-        // Exclure les flags "enabled" uniquement
+        // Exclude enabled-only flags only
         const dataKeys = Object.keys(item.data);
         if (dataKeys.length === 1 && item.data.enabled === true) return false;
         
-        // Garder les jobs : item_key commence par 'job-'
+        // Keep jobs: item_key starts with 'job-'
         if (item.item_key && item.item_key.startsWith('job-')) {
           return true;
         }
         
-        // Exclure les items où item_key ou name correspond exactement au nom du module (flag d'activation)
+        // Exclude items where item_key or name exactly matches the module name (activation flag)
         if (item.item_key === monitoringKey || item.item_key === equipementKey ||
             item.name === monitoringKey || item.name === equipementKey) {
-          // Mais garder si c'est une vraie instance (a un logiciel ou instances: [])
+          // But keep real instances (have logiciel or instances: [])
           if (item.data.logiciel || (item.data.instances && Array.isArray(item.data.instances))) {
             return true;
           }
           return false;
         }
         
-        // Garder les items qui ont un logiciel (nouvelle structure) ou instances: [] (ancienne structure)
+        // Keep items with logiciel (new structure) or instances: [] (legacy structure)
         return item.data.logiciel || (item.data.instances && Array.isArray(item.data.instances));
       });
       
       if (realItems.length > 0) {
-        // Si on a plusieurs items, ce sont des instances individuelles (nouvelle structure)
-        // Si on a un seul item avec instances: [], c'est l'ancienne structure
+        // Multiple items means individual instances (new structure)
+        // A single item with instances: [] is legacy structure
         const firstItem = realItems[0];
         if (firstItem.data.instances && Array.isArray(firstItem.data.instances) && realItems.length === 1) {
-          // Ancienne structure : une seule ligne avec { instances: [...] }
+          // Legacy structure: single object with { instances: [...] }
           equipements.Sauvegarde = firstItem.data;
         } else {
-          // Nouvelle structure : une ligne par instance ET des lignes job-{instanceId} séparées
-          // Trier par name pour garder un ordre cohérent
+          // New structure: one row per instance and separate job-{instanceId} rows
+          // Sort by name for consistent ordering
           const sortedItems = [...realItems].sort((a, b) => {
             const nameA = a.name || a.item_key || '';
             const nameB = b.name || b.item_key || '';
             return nameA.localeCompare(nameB);
           });
 
-          // Séparer les instances et les jobs
-          // Les jobs ont item_key qui commence par 'job-' OU data.type === 'job'
-          // Les instances ont data.type === 'instance' OU ont un logiciel (et ne sont pas des jobs)
+          // Split instances and jobs
+          // Jobs have item_key starting with 'job-' OR data.type === 'job'
+          // Instances have data.type === 'instance' OR logiciel (and are not jobs)
           const instanceItems = sortedItems.filter(item => {
-            // Si c'est un job (item_key commence par 'job-'), ce n'est pas une instance
+            // Jobs (item_key starts with 'job-') are not instances
             if (item.item_key && item.item_key.startsWith('job-')) return false;
-            // Si data.type === 'instance', c'est une instance
+            // data.type === 'instance' marks an instance
             if (item.data && item.data.type === 'instance') return true;
-            // Si data.type === 'job', ce n'est pas une instance
+            // data.type === 'job' is not an instance
             if (item.data && item.data.type === 'job') return false;
-            // Sinon, si l'item a un logiciel, c'est une instance
+            // Otherwise, rows with logiciel are instances
             return item.data && item.data.logiciel;
           });
           const jobItems = sortedItems.filter(item => {
-            // Un job a item_key qui commence par 'job-' OU data.type === 'job'
+            // A job has item_key starting with 'job-' OR data.type === 'job'
             return (item.item_key && item.item_key.startsWith('job-')) || 
                    (item.data && item.data.type === 'job');
           });
 
           const instances = instanceItems.map(instanceItem => {
             const instanceData = { ...instanceItem.data };
-            // Retirer le marqueur type
+            // Remove type marker
             delete instanceData.type;
 
-            // L'identifiant côté frontend peut être stocké dans instanceData.instanceId,
-            // sinon utiliser l'id de la ligne en base
+            // Frontend identifier may be stored in instanceData.instanceId,
+            // otherwise use database row id
             const instanceFrontendId = instanceData.instanceId || instanceItem.id;
 
-            // Trouver les jobs liés via l'item_key 'job-{instanceFrontendId}'
+            // Find linked jobs via item_key 'job-{instanceFrontendId}'
             const instanceJobs = jobItems
               .filter(jobItem => {
                 const jobItemKey = jobItem.item_key || '';
-                // L'item_key du job est 'job-{instanceId}'
+                // Job item_key is 'job-{instanceId}'
                 if (jobItemKey.startsWith('job-')) {
-                  const jobInstanceId = jobItemKey.substring(4); // Enlever 'job-'
+                  const jobInstanceId = jobItemKey.substring(4); // Strip 'job-' prefix
                   return jobInstanceId === instanceFrontendId;
                 }
-                // Fallback : si le job a data.type === 'job' mais pas d'item_key, 
-                // on ne peut pas le lier (ne devrait pas arriver)
+                // Fallback: job with data.type === 'job' but no item_key 
+                // cannot be linked (should not happen)
                 return false;
               })
               .map(jobItem => {
                 const jobData = { ...jobItem.data };
-                // Ne supprimer le type que s'il s'agit du marqueur 'job' (pour compatibilité avec anciennes données)
-                // Sinon, préserver le type de sauvegarde (Complète, Incrémentale, etc.)
+                // Remove type only when it is the 'job' marker (legacy compatibility)
+                // Otherwise preserve backup type (Full, Incremental, etc.)
                 if (jobData.type === 'job') {
                   delete jobData.type;
                 }
@@ -257,7 +257,7 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
         }
       }
     } else if (equipementKey === 'Antispam') {
-      // Antispam : agréger toutes les solutions individuelles en un objet avec solutions: []
+      // Antispam: aggregate individual solutions into an object with solutions: []
       const realItems = items.filter(item => {
         if (!item.data || typeof item.data !== 'object') return false;
         const dataKeys = Object.keys(item.data);
@@ -281,14 +281,14 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
       });
       
       if (realItems.length > 0) {
-        // Si on a plusieurs items, ce sont des solutions individuelles (nouvelle structure)
-        // Si on a un seul item avec solutions: [], c'est l'ancienne structure
+        // Multiple items means individual solutions (new structure)
+        // A single item with solutions: [] is legacy structure
         const firstItem = realItems[0];
         if (firstItem.data.solutions && Array.isArray(firstItem.data.solutions) && realItems.length === 1) {
-          // Ancienne structure : une seule ligne avec { solutions: [...] }
+          // Legacy structure: single object with { solutions: [...] }
           equipements.Antispam = firstItem.data;
         } else {
-          // Nouvelle structure : une ligne par solution, on les agrège
+          // New structure: one row per solution, aggregated here
           const sortedItems = [...realItems].sort((a, b) => {
             const nameA = a.name || a.item_key || '';
             const nameB = b.name || b.item_key || '';
@@ -296,42 +296,42 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
           });
           equipements.Antispam = {
             solutions: sortedItems.map(item => ({
-              id: item.id, // Garder l'ID pour les mises à jour
+              id: item.id, // Keep ID for updates
               ...item.data
             }))
           };
         }
       }
     } else if (equipementKey === 'Antivirus') {
-      // Antivirus : agréger toutes les solutions individuelles en un objet avec solutions: []
-      // On garde TOUS les items qui ont des données réelles (pas juste un flag enabled)
+      // Antivirus: aggregate individual solutions into an object with solutions: []
+      // Keep all items with real data (not just an enabled flag)
       const realItems = items.filter(item => {
         if (!item.data || typeof item.data !== 'object') {
           return false;
         }
         const dataKeys = Object.keys(item.data);
         
-        // Exclure uniquement les flags d'activation simples (uniquement {enabled: true})
+        // Exclude simple activation flags (only {enabled: true})
         if (dataKeys.length === 1 && item.data.enabled === true) {
           return false;
         }
         
-        // Si l'item_key commence par "solution-", c'est une vraie solution antivirus
+        // item_key starting with "solution-" is a real antivirus solution
         if (item.item_key && item.item_key.startsWith('solution-')) {
           return true;
         }
         
-        // Si l'item a des solutions ou une solution, c'est une vraie donnée antivirus
+        // Items with solutions or a solution field contain real antivirus data
         const hasSolutions = item.data.solutions && Array.isArray(item.data.solutions) && item.data.solutions.length > 0;
         const hasSolution = item.data.solution && typeof item.data.solution === 'string' && item.data.solution.trim() !== '';
         const hasLogiciel = item.data.logiciel && typeof item.data.logiciel === 'string' && item.data.logiciel.trim() !== '';
         
-        // Garder si c'est une vraie solution (a un solution, solutions, ou logiciel)
+        // Keep real solutions (solution, solutions, or logiciel fields)
         if (hasSolutions || hasSolution || hasLogiciel) {
           return true;
         }
         
-        // Si le name contient le nom d'une solution connue, c'est probablement une vraie solution
+        // Names containing known solution vendors are likely real solutions
         if (item.name && (item.name.includes('BitDefender') || item.name.includes('Kaspersky') || 
             item.name.includes('Symantec') || item.name.includes('Trend') || 
             item.name.includes('McAfee') || item.name.includes('Norton') || 
@@ -339,16 +339,16 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
           return true;
         }
         
-        // Exclure uniquement les items où item_key ou name correspond exactement au nom du module
-        // ET qui n'ont pas de vraies données (pas de solution/solutions/logiciel)
+        // Exclude items whose item_key or name exactly matches the module name
+        // AND have no real solution/solutions/logiciel data
         if ((item.item_key === monitoringKey || item.item_key === equipementKey ||
              item.name === monitoringKey || item.name === equipementKey) &&
             !hasSolutions && !hasSolution && !hasLogiciel) {
           return false;
         }
         
-        // Si l'item a d'autres données (pas juste enabled), on le garde aussi
-        // Cela permet de garder les items avec des données personnalisées
+        // Keep items with other data besides enabled
+        // This keeps items with custom data fields
         if (dataKeys.length > 0 && !(dataKeys.length === 1 && dataKeys[0] === 'enabled')) {
           return true;
         }
@@ -357,14 +357,14 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
       });
       
       if (realItems.length > 0) {
-        // Si on a plusieurs items, ce sont des solutions individuelles (nouvelle structure)
-        // Si on a un seul item avec solutions: [], c'est l'ancienne structure
+        // Multiple items means individual solutions (new structure)
+        // A single item with solutions: [] is legacy structure
         const firstItem = realItems[0];
         if (firstItem.data.solutions && Array.isArray(firstItem.data.solutions) && realItems.length === 1) {
-          // Ancienne structure : une seule ligne avec { solutions: [...] }
+          // Legacy structure: single object with { solutions: [...] }
           equipements.Antivirus = firstItem.data;
         } else {
-          // Nouvelle structure : une ligne par solution, on les agrège
+          // New structure: one row per solution, aggregated here
           const sortedItems = [...realItems].sort((a, b) => {
             const nameA = a.name || a.item_key || '';
             const nameB = b.name || b.item_key || '';
@@ -383,7 +383,7 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
         }
       }
     } else if (equipementKey === 'Office365') {
-      // Office365 a des licences
+      // Office365 has licenses
       const realItems = items.filter(item => 
         item.data && 
         item.data.licences && 
@@ -396,10 +396,10 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
         equipements[equipementKey] = mainItem.data || { licences: [] };
       }
     } else {
-      // Pour les tableaux d'équipements (Internet, Serveurs, NAS, Firewalls, etc.)
-      // Filtrer UNIQUEMENT les flags "enabled" (item_key/name = nom du module ET data = {enabled: true})
+      // For array equipment (Internet, Servers, NAS, Firewalls, etc.)
+      // Filter only module activation flags (item_key/name = module name AND data = {enabled: true})
       const filteredItems = items.filter(item => {
-        // Exclure uniquement les flags d'activation de module
+        // Exclude module activation flags only
         const isFlag = (item.item_key === monitoringKey || item.item_key === equipementKey ||
                        item.name === monitoringKey || item.name === equipementKey) &&
                        item.data && 
@@ -410,13 +410,13 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
         return !isFlag;
       });
       
-      // Transformer en équipements (is_active vient des colonnes v_b_clients_m_*)
+      // Map rows to equipment objects (is_active comes from v_b_clients_m_* columns)
       equipements[equipementKey] = filteredItems.map(item => {
-        // Utiliser data si présent, sinon créer un objet minimal
+        // Use data when present, otherwise build a minimal object
         const itemData = item.data && typeof item.data === 'object' ? item.data : {};
         const { id: _dataId, ...dataWithoutId } = itemData;
         
-        // S'assurer qu'on a un nom
+        // Ensure a display name exists
         const nom = itemData.nom || item.name || item.item_key || 'Sans nom';
         
         return {
@@ -434,7 +434,7 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
     }
   }
 
-  // Activer automatiquement Entra si des credentials Azure existent
+  // Automatically enable Entra when Azure credentials exist
   if (options.azureHasCredentials) {
     modules_monitoring.Office365 = true;
   }
@@ -446,7 +446,7 @@ export function transformClientModulesToFrontend(rawData, options = {}) {
   };
 }
 
-/** Comptes matériel alignés sur getClientEquipmentTotal (EnterpriseDetailPage). */
+/** Equipment counts aligned with getClientEquipmentTotal (EnterpriseDetailPage). */
 export function countHardwareEquipment(equipements = {}) {
   return {
     Internet: Array.isArray(equipements.Internet) ? equipements.Internet.length : 0,

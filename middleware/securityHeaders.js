@@ -1,4 +1,4 @@
-/** En-têtes de sécurité HTTP (équivalent minimal à helmet). */
+/** HTTP security headers (minimal helmet equivalent). */
 
 export function securityHeaders(_req, res, next) {
   res.setHeader("X-Content-Type-Options", "nosniff");

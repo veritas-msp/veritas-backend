@@ -3,9 +3,9 @@ import { decrypt } from '../utils/encryption.js';
 import { getSettingsMap } from '../utils/settingsHelper.js';
 
 /**
- * Résout les credentials Bitdefender à utiliser pour un appel API.
- * - bitdefenderTenantId : tenant dédié stocké dans v_b_clients_bitdefender
- * - sinon : credentials globaux (v_b_settings / env)
+ * Resolves Bitdefender credentials to use for an API call.
+ * - bitdefenderTenantId: dedicated tenant stored in v_b_clients_bitdefender
+ * - otherwise: global credentials (v_b_settings / env)
  */
 export async function resolveBitdefenderCredentials({ clientId, bitdefenderTenantId } = {}) {
   if (bitdefenderTenantId) {

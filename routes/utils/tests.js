@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 🧪 Routes de test et vérification
+// 🧪 Test and verification routes
 // ───────────────────────────────────────────────
 import express from 'express';
 import fetch from 'node-fetch';
@@ -20,7 +20,7 @@ import { verifyVeritasConformance } from '../../utils/verifyVeritasDatabase.js';
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 🩺 GET /api/status — Vérifie si l'API répond
+// 🩺 GET /api/status — Check whether the API responds
 // ───────────────────────────────────────────────
 router.get('/status', (req, res) => {
   if (process.env.NODE_ENV === 'production') {
@@ -30,7 +30,7 @@ router.get('/status', (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🗄️ GET /api/db-status — Vérifie si la base de données est joignable
+// 🗄️ GET /api/db-status — Check whether the database is reachable
 // ───────────────────────────────────────────────
 router.get('/db-status', async (req, res) => {
   if (!process.env.DATABASE_URL?.trim()) {
@@ -52,7 +52,7 @@ router.get('/db-status', async (req, res) => {
 router.use(requireSetupOrAdmin);
 
 // ───────────────────────────────────────────────
-// 📊 GET /api/db-stats — Statistiques PostgreSQL
+// 📊 GET /api/db-stats — PostgreSQL statistics
 // ───────────────────────────────────────────────
 router.get('/db-stats', async (req, res) => {
   if (!process.env.DATABASE_URL?.trim()) {
@@ -119,7 +119,7 @@ router.get('/db-stats', async (req, res) => {
   }
 });
 
-// 🧪 POST /api/db-test — Test de connexion + conformité Veritas
+// 🧪 POST /api/db-test — Connection test + Veritas schema conformance
 // ───────────────────────────────────────────────
 router.post('/db-test', async (req, res) => {
   try {
@@ -201,7 +201,7 @@ router.post('/db-test', async (req, res) => {
   }
 });
 
-// 💾 POST /api/db-apply — Enregistre et applique la configuration PostgreSQL
+// 💾 POST /api/db-apply — Save and apply PostgreSQL configuration
 // ───────────────────────────────────────────────
 router.post('/db-apply', async (req, res) => {
   try {
@@ -303,11 +303,11 @@ router.post('/db-maintenance', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📡 GET /api/unifi-status — Statut de l'API UniFi
+// 📡 GET /api/unifi-status — Status API UniFi
 // ───────────────────────────────────────────────
 router.get('/unifi-status', async (req, res) => {
   try {
-    // Récupération des paramètres depuis la base de données (décryptés)
+    // Load settings from the database (decrypted)
     const settingsMap = await getSettingsMap(['UNIFI_API_KEY']);
     const apiKey = settingsMap.UNIFI_API_KEY || process.env.UNIFI_API_KEY;
     
@@ -318,8 +318,8 @@ router.get('/unifi-status', async (req, res) => {
       });
     }
 
-    // Test de connexion à l'API UniFi Site Manager
-    // Endpoint de base pour vérifier l'authentification
+    // Connection test to the UniFi Site Manager API
+    // Base endpoint to verify authentication
     const response = await fetch('https://api.ui.com/v1/hosts', {
       method: 'GET',
       headers: {
@@ -339,13 +339,13 @@ router.get('/unifi-status', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📡 POST /api/unifi-test — Test de connexion UniFi avec paramètres personnalisés
+// 📡 POST /api/unifi-test — UniFi connection test with custom settings
 // ───────────────────────────────────────────────
 router.post('/unifi-test', async (req, res) => {
   try {
     const { UNIFI_API_KEY } = req.body;
     
-    // Validation des paramètres requis
+    // Validate required settings
     if (!UNIFI_API_KEY) {
       return res.status(400).json({
         success: false,
@@ -354,8 +354,8 @@ router.post('/unifi-test', async (req, res) => {
       });
     }
 
-    // Test de connexion à l'API UniFi Site Manager
-    // Endpoint pour récupérer la liste des hosts (test basique d'authentification)
+    // Connection test to the UniFi Site Manager API
+    // Endpoint to fetch the host list (basic authentication test)
     const response = await fetch('https://api.ui.com/v1/hosts', {
       method: 'GET',
       headers: {
@@ -367,7 +367,7 @@ router.post('/unifi-test', async (req, res) => {
     if (response.ok) {
       const data = await response.json();
       
-      // Essayer de récupérer la liste des sites pour vérifier les permissions
+      // Try to fetch the site list to verify permissions
       const sitesResponse = await fetch('https://api.ui.com/v1/sites', {
         method: 'GET',
         headers: {
@@ -398,7 +398,7 @@ router.post('/unifi-test', async (req, res) => {
     } else {
       const errorData = await response.json().catch(() => ({}));
       
-      // Gérer les erreurs spécifiques de l'API UniFi
+      // Handle UniFi API-specific errors
       let errorMessage = 'Erreur de connexion à l\'API UniFi';
       if (response.status === 401) {
         errorMessage = 'API Key invalide ou expirée';
@@ -425,13 +425,13 @@ router.post('/unifi-test', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🐙 POST /api/github-test — Test de connexion GitHub
+// 🐙 POST /api/github-test — GitHub connection test
 // ───────────────────────────────────────────────
 router.post('/github-test', async (req, res) => {
   try {
     const { GITHUB_TOKEN, GITHUB_REPO_FRONT, GITHUB_REPO_BACK } = req.body;
     
-    // Validation des paramètres requis
+    // Validate required settings
     if (!GITHUB_TOKEN) {
       return res.status(400).json({
         success: false,
@@ -440,7 +440,7 @@ router.post('/github-test', async (req, res) => {
       });
     }
 
-    // Test de connexion à l'API GitHub
+    // Connection test to the GitHub API
     const response = await fetch('https://api.github.com/user', {
       method: 'GET',
       headers: {
@@ -453,7 +453,7 @@ router.post('/github-test', async (req, res) => {
     if (response.ok) {
       const userData = await response.json();
       
-      // Test des repositories si fournis
+      // Test repositories when provided
       let repoStatus = {};
       if (GITHUB_REPO_FRONT) {
         try {
@@ -515,7 +515,7 @@ router.post('/github-test', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📧 POST /api/email-test — Test d'envoi d'email
+// 📧 POST /api/email-test — Email send test
 // ───────────────────────────────────────────────
 router.post('/email-test', async (req, res) => {
   try {
@@ -529,7 +529,7 @@ router.post('/email-test', async (req, res) => {
 
     const settingsMap = await getSettingsMap(['SMTP_USER', 'SMTP_PASS']);
     
-    // Validation des paramètres requis
+    // Validate required settings
     if (!BUG_REPORT_EMAIL || !SMTP_HOST || !SMTP_PORT) {
       return res.status(400).json({
         success: false,
@@ -542,11 +542,11 @@ router.post('/email-test', async (req, res) => {
     const smtpPass = SMTP_PASS || settingsMap.SMTP_PASS || process.env.SMTP_PASS || '';
     const smtpPort = parseInt(SMTP_PORT, 10);
 
-    // Configuration du transporteur SMTP
+    // Configure SMTP transporter
     const transporter = nodemailer.createTransport({
       host: SMTP_HOST,
       port: smtpPort,
-      secure: smtpPort === 465, // true pour 465, false pour autres ports
+      secure: smtpPort === 465, // true for 465, false for other ports
       auth: smtpUser
         ? {
             user: smtpUser,
@@ -555,10 +555,10 @@ router.post('/email-test', async (req, res) => {
         : undefined,
     });
 
-    // Test de connexion SMTP
+    // SMTP connection test
     await transporter.verify();
     
-    // Envoi d'un email de test
+    // Send a test email
     const fromAddress = smtpUser || BUG_REPORT_EMAIL;
     const testEmail = {
       from: fromAddress,

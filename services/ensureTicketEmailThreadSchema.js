@@ -32,16 +32,14 @@ export async function ensureTicketEmailThreadSchema() {
 
     const filePath = path.join(root, MIGRATION_FILE);
     if (!fs.existsSync(filePath)) {
-      console.warn("[ticket-email-thread] Fichier migration introuvable :", MIGRATION_FILE);
+      console.warn("[ticket-email-thread] Migration file not found:", MIGRATION_FILE);
       return;
     }
 
-    console.log("[ticket-email-thread] Application de la migration…");
     await client.query(fs.readFileSync(filePath, "utf8"));
     ensured = true;
-    console.log("[ticket-email-thread] Schéma OK");
   } catch (err) {
-    console.error("[ticket-email-thread] Erreur migration:", err?.message || err);
+    console.error("[ticket-email-thread] Migration failed:", err?.message || err);
   } finally {
     client.release();
   }

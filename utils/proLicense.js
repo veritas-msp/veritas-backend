@@ -38,7 +38,7 @@ export function getLicenseCacheMaxAgeMs() {
   return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_CACHE_MS;
 }
 
-/** Dev local : VERITAS_EDITION=pro sans clé ni billing. */
+/** Local dev: VERITAS_EDITION=pro without license key or billing. */
 export function isDevProBypass() {
   return (
     process.env.NODE_ENV !== "production" &&
@@ -174,7 +174,7 @@ export async function refreshProLicenseState() {
   }
 }
 
-/** Rafraîchit la licence si le cache est périmé (révocation quasi instantanée). */
+/** Refreshes the license if the cache is stale (near-instant revocation). */
 export async function ensureFreshLicense() {
   if (isDevProBypass()) return cache;
 
@@ -219,7 +219,7 @@ function buildLicenseDetail({ includePrivate = false } = {}) {
   return detail;
 }
 
-/** Résumé licence sans PII — exposé via GET /api/edition (public). */
+/** License summary without PII — exposed via GET /api/edition (public). */
 export function getLicensePublicSummary() {
   return {
     edition: isLicenseCacheValid() ? "pro" : "community",
@@ -229,7 +229,7 @@ export function getLicensePublicSummary() {
   };
 }
 
-/** Résumé complet pour admins (GET /api/license). */
+/** Summary complete for admins (GET /api/license). */
 export function getLicenseAdminSummary() {
   return {
     edition: isLicenseCacheValid() ? "pro" : "community",

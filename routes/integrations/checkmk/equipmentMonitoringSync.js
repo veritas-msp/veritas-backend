@@ -1,6 +1,6 @@
 // ───────────────────────────────────────────────
 // 🔄 Sync CheckMK → v_b_equipment_checkmk_monitoring
-// Persistance des données monitoring pour les équipements mappés (EquipmentDetailPage)
+// Persist monitoring data for mapped equipment (EquipmentDetailPage)
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -62,7 +62,7 @@ function isAlertEvent(event) {
   return state === 1 || state === 2;
 }
 
-/** Résumé visuel pour les listes d'équipements (tableaux Enterprise / Equipment) */
+/** Visual summary for equipment lists (Enterprise / Equipment arrays) */
 export function computeMonitoringSummary(monitoringData, lastSyncedAt) {
   if (!monitoringData || typeof monitoringData !== 'object') {
     return {
@@ -119,7 +119,7 @@ const EQUIPMENT_FAMILY_TABLES = {
   toip: 'v_b_clients_m_toip',
 };
 
-/** Appel interne aux routes CheckMK existantes (réutilise toute la logique de parsing) */
+/** Internal call to existing CheckMK routes (reuses all parsing logic) */
 async function internalCheckMKGet(req, path, query = {}) {
   const url = new URL(`${INTERNAL_BASE}/api/checkmk${path}`);
   for (const [k, v] of Object.entries(query)) {
@@ -207,7 +207,7 @@ async function verifyEquipmentMapping(equipmentId, clientId, family, hostName) {
 }
 
 /**
- * Récupère un snapshot CheckMK via les routes internes et fusionne avec les données existantes.
+ * Fetches a snapshot CheckMK via routes internals and fusionwith data existinges.
  */
 async function fetchAndMergeCheckMKData(req, { hostName, site, existingMonitoringData, incrementalFrom }) {
   const now = new Date();
@@ -407,7 +407,7 @@ export async function runEquipmentMonitoringSync(req, {
 
 // ───────────────────────────────────────────────
 // POST /api/checkmk/equipment-monitoring/summaries
-// Body: { clientId?, equipmentIds? } — au moins un des deux
+// Body: { clientId?, equipmentIds? } — to the less a deux
 // ───────────────────────────────────────────────
 router.post('/equipment-monitoring/summaries', verifyJWT, async (req, res) => {
   try {

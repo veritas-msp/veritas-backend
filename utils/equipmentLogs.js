@@ -6,7 +6,7 @@ export function normalizeEquipmentLogCategory(value) {
 }
 
 /**
- * Construit la clause WHERE et les paramètres pour filtrer les logs d'un équipement.
+ * Builds WHERE clause and parameters for filtering equipment logs.
  */
 export function buildEquipmentLogQuery({
   clientId,

@@ -140,7 +140,7 @@ async function countByClientFromTables(tables) {
       }
     } catch (err) {
       if (err.code === "42P01" || err.code === "42703") {
-        console.warn(`[client-deletion] table ignorée ${tableName}:`, err.message);
+        console.warn(`[client-deletion] table skipped ${tableName}:`, err.message);
         continue;
       }
       throw err;
@@ -159,7 +159,7 @@ async function countByClientFromQuery(query, label) {
     return counts;
   } catch (err) {
     if (err.code === "42P01" || err.code === "42703") {
-      console.warn(`[client-deletion] requête ignorée (${label}):`, err.message);
+      console.warn(`[client-deletion] query skipped (${label}):`, err.message);
       return {};
     }
     throw err;

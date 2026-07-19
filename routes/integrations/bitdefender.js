@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📦 Imports principaux
+// 📦 Main imports
 // ───────────────────────────────────────────────
 import express from 'express';
 import { pool } from '../../database/db.js';
@@ -12,7 +12,7 @@ import {
 
 const router = express.Router();
 
-// Toutes les routes BitDefender nécessitent une authentification
+// All BitDefender routes require authentication
 router.use(verifyJWT);
 
 async function getCredentialsFromRequest(req) {
@@ -66,7 +66,7 @@ async function fetchGravityZoneCompanies(apiUrl, apiKey, { includeDetails = fals
             entry.canBeManagedByAbove = companyDetails.canBeManagedByAbove ?? null;
           }
         } catch {
-          // Conserver le nom issu des comptes
+          // Keep the name from account data
         }
       })
     );
@@ -159,13 +159,13 @@ function buildApiSection(id, label, exploited, result, mapper) {
   };
 }
 
-// Fonction helper pour créer l'en-tête d'authentification Basic Auth
+// Helper function to create Basic Auth authentication header
 function createAuthHeader(apiKey) {
   const encoded = Buffer.from(`${apiKey}:`).toString('base64');
   return `Basic ${encoded}`;
 }
 
-// Fonction helper pour faire un appel JSON-RPC à l'API BitDefender
+// Helper function to make a JSON-RPC call to the BitDefender API
 async function bitdefenderRpcCall(apiUrl, apiKey, apiName, method, params = {}) {
   // apiName = 'network', 'licensing', 'companies', 'accounts', etc.
   // method = 'getEndpointsList', 'getLicenseInfo', etc.
@@ -202,7 +202,7 @@ async function bitdefenderRpcCall(apiUrl, apiKey, apiName, method, params = {}) 
 }
 
 // ───────────────────────────────────────────────
-// ⚙️ GET /config — Statut de la configuration globale
+// ⚙️ GET /config — Global configuration status
 // ───────────────────────────────────────────────
 router.get('/config', async (_req, res) => {
   try {
@@ -214,7 +214,7 @@ router.get('/config', async (_req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔄 POST /sync/:companyId — Récupérer les endpoints d'une entreprise
+// 🔄 POST /sync/:companyId — Fetch company endpoints
 // ───────────────────────────────────────────────
 router.post('/sync/:companyId', async (req, res) => {
   try {
@@ -229,11 +229,11 @@ router.post('/sync/:companyId', async (req, res) => {
       return res.status(400).json({ success: false, error: credErr.message });
     }
 
-    // Récupérer TOUS les endpoints de l'entreprise avec pagination
+    // Fetch all company endpoints with pagination
     // Documentation: https://www.bitdefender.com/business/support/en/77209-128483-getendpointslist.html
     let allEndpoints = [];
     let currentPage = 1;
-    const perPage = 100; // Maximum autorisé par l'API
+    const perPage = 100; // Maximum allowed by the API
     let hasMorePages = true;
     
     while (hasMorePages) {
@@ -242,7 +242,7 @@ router.post('/sync/:companyId', async (req, res) => {
           parentId: companyId,
           page: currentPage,
           perPage: perPage,
-          // Inclure récursivement tous les endpoints dans "Ordinateurs et Groupes"
+          // Recursively include all endpoints under "Computers and Groups"
           // cf. documentation getEndpointsList (filters.depth.allItemsRecursively)
           filters: {
             depth: {
@@ -251,7 +251,7 @@ router.post('/sync/:companyId', async (req, res) => {
           }
         });
         
-        // Structure de réponse: { page, pagesCount, perPage, total, items: [...] }
+        // Response shape: { page, pagesCount, perPage, total, items: [...] }
         if (pageResult && Array.isArray(pageResult.items)) {
           const items = pageResult.items;
           
@@ -261,42 +261,42 @@ router.post('/sync/:companyId', async (req, res) => {
             const total = pageResult.total || 0;
             const pagesCount = pageResult.pagesCount || 0;
             
-            // Si on a moins de 100 items, c'est définitivement la dernière page
+            // Fewer than 100 items means this is definitely the last page
             if (items.length < perPage) {
               hasMorePages = false;
             } 
-            // Si on a atteint le total déclaré, arrêter
+            // Stop when the declared total is reached
             else if (total > 0 && allEndpoints.length >= total) {
               hasMorePages = false;
             } 
-            // Si on a atteint le nombre de pages déclaré, arrêter
+            // Stop when the declared page count is reached
             else if (pagesCount > 0 && currentPage >= pagesCount) {
               hasMorePages = false;
             } 
-            // Sinon, continuer à la page suivante
+            // Otherwise, continue to the next page
             else {
               currentPage++;
             }
           } else {
-            // Pas d'items sur cette page = dernière page
+            // No items on this page = last page
             hasMorePages = false;
           }
         } else {
-          // Structure de réponse inattendue, arrêter
+          // Unexpected response shape; stop
           hasMorePages = false;
         }
         
-        // Sécurité : limite à 100 pages (10 000 endpoints max)
+        // Security: limit to 100 pages (10,000 endpoints max)
         if (currentPage > 100) {
           hasMorePages = false;
         }
       } catch (error) {
-        // Erreur = arrêter la pagination
+        // Error: stop pagination
         hasMorePages = false;
       }
     }
     
-    // Récupérer les informations de l'entreprise (nom)
+    // Fetch company information (name)
     let companyInfo = null;
     try {
       // Documentation: https://www.bitdefender.com/business/support/en/77209-126239-getcompanydetails.html
@@ -304,10 +304,10 @@ router.post('/sync/:companyId', async (req, res) => {
         companyId: companyId
       });
     } catch (error) {
-      // Ne pas bloquer la réponse si les informations de l'entreprise ne sont pas disponibles
+      // Do not block the response if company information is unavailable
     }
 
-    // Récupérer les informations de licence pour l'entreprise
+    // Fetch license information for the company
     let licenseInfo = null;
     try {
       // Documentation: https://www.bitdefender.com/business/support/en/77209-126307-getlicenseinfo.html
@@ -315,25 +315,25 @@ router.post('/sync/:companyId', async (req, res) => {
         companyId: companyId
       });
     } catch (error) {
-      // Ne pas bloquer la réponse si les informations de licence ne sont pas disponibles
+      // Do not block the response if license information is unavailable
     }
 
-    // Compter les types d'endpoints
+    // Count endpoint types
     const physicalCount = allEndpoints.filter(e => e.machineType === 1).length;
     const virtualCount = allEndpoints.filter(e => e.machineType === 2 || e.machineType === 3).length;
 
-    // Formater les données de licence - explorer tous les champs possibles
+    // Format license data — explore all possible fields
     let formattedLicense = null;
     if (licenseInfo) {
-      // Chercher total slots et used slots
+      // Look up total and used slots
       let totalSlots = null;
       let usedSlots = null;
       
-      // Essayer directement les champs slots
+      // Try slot fields directly
       if (licenseInfo.totalSlots !== undefined && licenseInfo.totalSlots !== null) {
         totalSlots = licenseInfo.totalSlots;
       } else if (licenseInfo.slots !== undefined && licenseInfo.slots !== null) {
-        // Si slots est un objet avec total
+        // If slots is an object with total
         if (typeof licenseInfo.slots === 'object' && licenseInfo.slots.total !== undefined) {
           totalSlots = licenseInfo.slots.total;
         } else if (typeof licenseInfo.slots === 'number') {
@@ -346,7 +346,7 @@ router.post('/sync/:companyId', async (req, res) => {
       if (licenseInfo.usedSlots !== undefined && licenseInfo.usedSlots !== null) {
         usedSlots = licenseInfo.usedSlots;
       } else if (licenseInfo.slots !== undefined && licenseInfo.slots !== null) {
-        // Si slots est un objet avec used
+        // If slots is an object with used
         if (typeof licenseInfo.slots === 'object' && licenseInfo.slots.used !== undefined) {
           usedSlots = licenseInfo.slots.used;
         }
@@ -354,11 +354,11 @@ router.post('/sync/:companyId', async (req, res) => {
         usedSlots = licenseInfo.used;
       }
       
-      // Utiliser totalSlots et usedSlots comme totalLicenses et usedLicenses
+      // Use totalSlots and usedSlots as totalLicenses and usedLicenses
       const totalLicenses = totalSlots;
       const usedLicenses = usedSlots;
       
-      // Chercher le nombre de licences disponibles
+      // Look up available license count
       let availableLicenses = null;
       if (licenseInfo.availableLicenses !== undefined && licenseInfo.availableLicenses !== null) {
         availableLicenses = licenseInfo.availableLicenses;
@@ -370,7 +370,7 @@ router.post('/sync/:companyId', async (req, res) => {
         availableLicenses = totalLicenses - usedLicenses;
       }
       
-      // Chercher la date d'expiration dans différents champs possibles
+      // Look for expiration date in various possible fields
       let expirationDate = null;
       const dateFields = ['expirationDate', 'expiration', 'expiryDate', 'expires', 'validUntil', 'endDate', 'validUntilDate'];
       for (const field of dateFields) {
@@ -380,7 +380,7 @@ router.post('/sync/:companyId', async (req, res) => {
         }
       }
       
-      // Si pas trouvé directement, chercher dans validity
+      // If not found directly, look in validity
       if (!expirationDate && licenseInfo.validity) {
         if (licenseInfo.validity.endDate) {
           expirationDate = licenseInfo.validity.endDate;
@@ -398,13 +398,13 @@ router.post('/sync/:companyId', async (req, res) => {
       };
     }
 
-    // Extraire le nom de l'entreprise
+    // Extract company name
     let companyName = null;
     if (companyInfo) {
       companyName = companyInfo.name || companyInfo.companyName || companyInfo.company || null;
     }
 
-    // Formater les données pour la réponse
+    // Format response data
     const responseData = {
       success: true,
       companyId: companyId,
@@ -447,7 +447,7 @@ router.post('/sync/:companyId', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📋 GET /companies — Liste des entreprises
+// 📋 GET /companies — List companys
 // ───────────────────────────────────────────────
 router.get('/companies', async (req, res) => {
   try {
@@ -477,7 +477,7 @@ router.get('/companies', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔍 POST /test — Tester la connexion à l'API
+// 🔍 POST /test — Test API connection
 // ───────────────────────────────────────────────
 router.post('/test', async (req, res) => {
   try {
@@ -561,7 +561,7 @@ router.post('/test', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📊 GET /statistics/:companyId — Récupérer les statistiques d'une entreprise
+// 📊 GET /statistics/:companyId — Fetch company statistics
 // ───────────────────────────────────────────────
 router.get('/statistics/:companyId', async (req, res) => {
   try {
@@ -578,7 +578,7 @@ router.get('/statistics/:companyId', async (req, res) => {
       return res.status(400).json({ success: false, error: credErr.message });
     }
 
-    // Convertir les dates en timestamps Unix si fournies
+    // Convert dates to Unix timestamps when provided
     let startTimestamp = null;
     let endTimestamp = null;
     
@@ -592,8 +592,8 @@ router.get('/statistics/:companyId', async (req, res) => {
       endTimestamp = Math.floor(end.getTime() / 1000);
     }
 
-    // Récupérer les endpoints pour calculer les statistiques disponibles
-    // Note: Les méthodes reports.* ne sont pas disponibles dans l'API, on utilise uniquement network.getEndpointsList
+    // Fetch endpoints to compute available statistics
+    // Note: reports.* methods are not available in the API; use only network.getEndpointsList
     let allEndpoints = [];
     try {
       let currentPage = 1;
@@ -643,7 +643,7 @@ router.get('/statistics/:companyId', async (req, res) => {
     } catch (error) {
     }
 
-    // Calculer les statistiques basées sur les endpoints disponibles
+    // Compute statistics based on available endpoints
     const statistics = {
       endpoints: {
         total: allEndpoints.length,
@@ -672,9 +672,9 @@ router.get('/statistics/:companyId', async (req, res) => {
       }
     };
 
-    // Analyser les endpoints
+    // Analyze endpoints
     allEndpoints.forEach(endpoint => {
-      // Type d'endpoint
+      // Endpoint type
       if (endpoint.machineType === 1) {
         statistics.endpoints.byType.physical++;
       } else if (endpoint.machineType === 2 || endpoint.machineType === 3) {
@@ -683,19 +683,19 @@ router.get('/statistics/:companyId', async (req, res) => {
         statistics.endpoints.byType.other++;
       }
 
-      // Statut géré
+      // Managed status
       if (endpoint.isManaged) {
         statistics.endpoints.managed++;
       } else {
         statistics.endpoints.unmanaged++;
       }
 
-      // Système d'exploitation
+      // Operating system
       const os = endpoint.operatingSystemVersion || endpoint.operatingSystem || 'Unknown';
-      const osName = os.split(' ')[0] || 'Unknown'; // Extraire le nom de l'OS (Windows, Linux, etc.)
+      const osName = os.split(' ')[0] || 'Unknown'; // Extract OS name (Windows, Linux, etc.)
       statistics.endpoints.byOS[osName] = (statistics.endpoints.byOS[osName] || 0) + 1;
 
-      // Statut en ligne/hors ligne
+      // Status online/offline
       const status = (endpoint.status || endpoint.onlineStatus || '').toLowerCase();
       if (status.includes('online') || status.includes('en ligne') || status === '1' || endpoint.isOnline) {
         statistics.endpoints.byStatus.online++;
@@ -705,7 +705,7 @@ router.get('/statistics/:companyId', async (req, res) => {
         statistics.endpoints.byStatus.unknown++;
       }
 
-      // Conformité
+      // Compliance
       const isCompliant = endpoint.isCompliant || 
                          (endpoint.policyStatus && endpoint.policyStatus === 'compliant') ||
                          (endpoint.status && endpoint.status === 'protected') ||
@@ -715,7 +715,7 @@ router.get('/statistics/:companyId', async (req, res) => {
         statistics.compliance.compliantEndpoints++;
       }
 
-      // Vulnérabilités critiques
+      // Critical vulnerabilities
       if (endpoint.criticalVulnerabilities && endpoint.criticalVulnerabilities > 0) {
         statistics.compliance.endpointsWithCriticalVulns++;
       } else if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
@@ -729,7 +729,7 @@ router.get('/statistics/:companyId', async (req, res) => {
       }
     });
 
-    // Calculer les taux
+    // Compute rates
     if (statistics.endpoints.total > 0) {
       statistics.compliance.protectionRate = Math.round((statistics.compliance.compliantEndpoints / statistics.endpoints.total) * 100);
       statistics.availability.onlineRate = Math.round((statistics.endpoints.byStatus.online / statistics.endpoints.total) * 100);
@@ -757,7 +757,7 @@ router.get('/statistics/:companyId', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📋 GET /reports/:companyId — Récupérer les rapports d'une entreprise
+// 📋 GET /reports/:companyId — Fetch company reports
 // ───────────────────────────────────────────────
 router.get('/reports/:companyId', async (req, res) => {
   try {
@@ -774,19 +774,18 @@ router.get('/reports/:companyId', async (req, res) => {
       return res.status(400).json({ success: false, error: credErr.message });
     }
 
-    // Construire les paramètres pour getReportsList
-    // Documentation BitDefender: getReportsList retourne la liste des rapports planifiés
-    // Selon la documentation, getReportsList ne prend pas de paramètres obligatoires
-    // On peut filtrer côté serveur après récupération
+    // Build settings for getReportsList
+    // BitDefender docs: getReportsList returns scheduled reports
+    // Per docs, getReportsList takes no required settings
+    // Server-side filtering can be applied after fetch
     const params = {};
 
-    // Note: L'API BitDefender getReportsList ne prend pas de companyId directement
-    // Les rapports sont récupérés au niveau de l'organisation/entreprise
-    // On utilise l'API reports.getReportsList
+    // Note: BitDefender getReportsList does not take companyId directly
+    // Use the reports.getReportsList API
     try {
       const reportsResult = await bitdefenderRpcCall(apiUrl, apiKey, 'reports', 'getReportsList', params);
       
-      // Gérer différentes structures de réponse possibles
+      // Handle different possible response structures
       let reports = [];
       if (Array.isArray(reportsResult)) {
         reports = reportsResult;
@@ -798,7 +797,7 @@ router.get('/reports/:companyId', async (req, res) => {
         reports = reportsResult.data;
       }
 
-      // Filtrer par type si spécifié dans la requête
+      // Filter by type when specified in the request
       if (type) {
         const typeNum = parseInt(type);
         if (!isNaN(typeNum) && typeNum > 0) {
@@ -806,9 +805,9 @@ router.get('/reports/:companyId', async (req, res) => {
         }
       }
 
-      // Filtrer par companyId si nécessaire (si les rapports contiennent cette info)
-      // Note: L'API BitDefender peut ne pas retourner directement le companyId dans les rapports
-      // On retourne tous les rapports disponibles pour le moment
+      // Filter by companyId if needed (when reports include this info)
+      // Note: BitDefender API may not return companyId directly in reports
+      // Return all reports for now
       
       return res.json({
         success: true,
@@ -819,7 +818,7 @@ router.get('/reports/:companyId', async (req, res) => {
         total: reportsResult?.total || reports.length
       });
     } catch (apiError) {
-      // Si l'API retourne une erreur, retourner un tableau vide plutôt qu'une erreur
+      // If the API returns an error, return an empty array instead of throwing
       return res.json({
         success: true,
         reports: [],
@@ -839,12 +838,12 @@ router.get('/reports/:companyId', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📊 GET /endpoints/:companyId/enriched — Récupérer les endpoints enrichis avec événements et infections
+// 📊 GET /endpoints/:companyId/enriched — Fetch enriched endpoints with events and infections
 // ───────────────────────────────────────────────
 router.get('/endpoints/:companyId/enriched', async (req, res) => {
   try {
     const { companyId } = req.params;
-    const { startDate, endDate } = req.query; // Dates optionnelles au format ISO ou timestamp
+    const { startDate, endDate } = req.query; // Optional dates in ISO or timestamp format
     
     let apiKey;
     let apiUrl;
@@ -856,7 +855,7 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
       return res.status(400).json({ success: false, error: credErr.message });
     }
 
-    // Calculer les dates (par défaut: 30 derniers jours)
+    // Compute date range (default: last 30 days)
     let startTimestamp = null;
     let endTimestamp = null;
     
@@ -864,7 +863,7 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
       const start = new Date(startDate);
       startTimestamp = Math.floor(start.getTime() / 1000);
     } else {
-      // Par défaut: 30 derniers jours
+      // Default: last 30 days
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       startTimestamp = Math.floor(thirtyDaysAgo.getTime() / 1000);
@@ -877,7 +876,7 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
       endTimestamp = Math.floor(Date.now() / 1000);
     }
 
-    // Récupérer tous les endpoints de l'entreprise
+    // Fetch all company endpoints
     let allEndpoints = [];
     let currentPage = 1;
     const perPage = 100;
@@ -924,12 +923,12 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
       }
     }
 
-    // Enrichir chaque endpoint avec les détails via getManagedEndpointDetails
+    // Enrich each endpoint with details via getManagedEndpointDetails
     const enrichedEndpoints = await Promise.all(allEndpoints.map(async (endpoint) => {
       let isInfected = false;
       let malwareDetected = false;
       let endpointState = null; // 1 - online, 2 - offline, 3 - suspended, 0 - unknown
-      // lastSeen peut venir de plusieurs variantes de payload selon version API.
+      // lastSeen may come from several payload variants depending on API version.
       let lastSeen =
         endpoint.lastSeen ||
         endpoint.lastSeenDate ||
@@ -940,8 +939,8 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
       let modules = null;
       let policy = null;
       
-      // Appeler getManagedEndpointDetails pour tous les endpoints avec id (gérés ou non)
-      // — lastSeen n'est disponible que via cette API pour la plupart des cas
+      // Call getManagedEndpointDetails for all endpoints with an id (managed or not)
+      // — lastSeen is usually only available via this API
       if (endpoint.id) {
         try {
           const endpointDetails = await bitdefenderRpcCall(apiUrl, apiKey, 'network', 'getManagedEndpointDetails', {
@@ -949,25 +948,25 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
           });
           
           if (endpointDetails) {
-            // Récupérer le statut malware
+            // Fetch malware status
             if (endpointDetails.malwareStatus) {
               isInfected = endpointDetails.malwareStatus.infected || false;
               malwareDetected = endpointDetails.malwareStatus.detection || false;
             }
             
-            // Récupérer l'état de l'endpoint
+            // Fetch endpoint state
             if (endpointDetails.state !== undefined && endpointDetails.state !== null) {
               endpointState = endpointDetails.state;
             }
             
-            // Récupérer lastSeen (plusieurs variantes possibles selon API)
+            // Fetch lastSeen (several possible variants depending on API)
             if (endpointDetails.lastSeen || endpointDetails.lastSeenDate) {
               lastSeen = endpointDetails.lastSeen || endpointDetails.lastSeenDate;
             } else if (endpointDetails.lastSuccessfulScan?.date || endpointDetails.lastSuccessfulScanDate) {
               lastSeen = endpointDetails.lastSuccessfulScan?.date || endpointDetails.lastSuccessfulScanDate;
             }
             
-            // Récupérer les informations de l'agent
+            // Fetch agent information
             if (endpointDetails.agent) {
               agentInfo = {
                 engineVersion: endpointDetails.agent.engineVersion || null,
@@ -979,12 +978,12 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
               };
             }
             
-            // Récupérer les modules
+            // Fetch modules
             if (endpointDetails.modules) {
               modules = endpointDetails.modules;
             }
             
-            // Récupérer la politique
+            // Fetch policy
             if (endpointDetails.policy) {
               policy = {
                 id: endpointDetails.policy.id || null,
@@ -994,7 +993,7 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
             }
           }
         } catch (error) {
-          // Ignorer les erreurs silencieusement (endpoint peut ne pas être géré ou ne pas exister)
+          // Silently ignore errors (endpoint may not be managed or may not exist)
         }
       }
       
@@ -1010,9 +1009,9 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
         isManaged: endpoint.isManaged || false,
         lastSuccessfulScan: endpoint.lastSuccessfulScan || null,
         lastSuccessfulScanDate: endpoint.lastSuccessfulScanDate || null,
-        // Nouvelles données enrichies via getManagedEndpointDetails
+        // New data enriched via getManagedEndpointDetails
         isInfected: isInfected,
-        malwareDetected: malwareDetected, // Détection dans les 24 dernières heures
+        malwareDetected: malwareDetected, // Detection within the last 24 hours
         endpointState: endpointState, // 1 - online, 2 - offline, 3 - suspended, 0 - unknown
         lastSeen: lastSeen,
         agent: agentInfo,
@@ -1046,7 +1045,7 @@ router.get('/endpoints/:companyId/enriched', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📋 GET /policies/:companyId — Récupérer les politiques de sécurité d'une entreprise
+// 📋 GET /policies/:companyId — Fetch company security policies
 // ───────────────────────────────────────────────
 router.get('/policies/:companyId', async (req, res) => {
   try {
@@ -1063,14 +1062,14 @@ router.get('/policies/:companyId', async (req, res) => {
       return res.status(400).json({ success: false, error: credErr.message });
     }
 
-    // Récupérer la liste des politiques
+    // Fetch policy list
     try {
       const policiesResult = await bitdefenderRpcCall(apiUrl, apiKey, 'policies', 'getPoliciesList', {
         page: parseInt(page),
         perPage: Math.min(parseInt(perPage), 100)
       });
       
-      // Gérer différentes structures de réponse possibles
+      // Handle different possible response structures
       let policies = [];
       if (policiesResult && Array.isArray(policiesResult.items)) {
         policies = policiesResult.items;
@@ -1078,10 +1077,10 @@ router.get('/policies/:companyId', async (req, res) => {
         policies = policiesResult;
       }
 
-      // Ne pas filtrer par companyId - on retournera toutes les politiques
-      // Le frontend filtrera pour ne garder que celles utilisées par les endpoints
+      // Do not filter by companyId — return all policies
+      // The frontend will filter to keep only policies used by endpoints
 
-      // Récupérer les détails de chaque politique
+      // Fetch details for each policy
       const policiesWithDetails = await Promise.all(policies.map(async (policy) => {
         let details = null;
         try {
@@ -1089,16 +1088,16 @@ router.get('/policies/:companyId', async (req, res) => {
             policyId: policy.id
           });
         } catch (error) {
-          // Ignorer les erreurs silencieusement
+          // Silently ignore errors
         }
         
-        // Extraire les modules actifs depuis settings
+        // Extract active modules from settings
         let activeModules = [];
         if (details && details.settings) {
           const settings = details.settings;
           
-          // Les modules peuvent être dans différents endroits selon la structure de l'API
-          // Essayer d'abord settings.modules (structure la plus courante)
+          // Modules may appear in different places depending on API structure
+          // Try settings.modules first (most common structure)
           if (settings.modules && typeof settings.modules === 'object') {
             Object.keys(settings.modules).forEach(moduleName => {
               if (settings.modules[moduleName] === true) {
@@ -1107,7 +1106,7 @@ router.get('/policies/:companyId', async (req, res) => {
             });
           }
           
-          // Si pas de modules trouvés, chercher directement dans settings
+          // If no modules were found, search directly in settings
           if (activeModules.length === 0) {
             const moduleFields = [
               'advancedThreatControl', 'antimalware', 'contentControl', 
@@ -1120,7 +1119,7 @@ router.get('/policies/:companyId', async (req, res) => {
             });
           }
           
-          // Chercher aussi dans enabledModules si présent
+          // Also look in enabledModules when present
           if (settings.enabledModules && Array.isArray(settings.enabledModules)) {
             settings.enabledModules.forEach(moduleName => {
               if (!activeModules.includes(moduleName)) {
@@ -1175,7 +1174,7 @@ router.get('/policies/:companyId', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📝 PUT /antivirus/:clientId — Sauvegarder les données antivirus en base
+// 📝 PUT /antivirus/:clientId — Back up antivirus data in the database
 // ───────────────────────────────────────────────
 router.put('/antivirus/:clientId', async (req, res) => {
   try {
@@ -1189,7 +1188,7 @@ router.put('/antivirus/:clientId', async (req, res) => {
       });
     }
 
-    // Vérifier si le client existe
+    // Check whether the client exists
     const clientCheck = await pool.query(
       'SELECT id FROM v_b_clients WHERE id::text = $1',
       [clientId]
@@ -1202,7 +1201,7 @@ router.put('/antivirus/:clientId', async (req, res) => {
       });
     }
 
-    // Vérifier si un enregistrement existe déjà
+    // Check whether a record already exists
     const existingCheck = await pool.query(
       'SELECT id FROM v_b_clients_m_antivirus WHERE client_id = $1::integer AND item_key = $2',
       [clientId, item_key]
@@ -1249,7 +1248,7 @@ router.put('/antivirus/:clientId', async (req, res) => {
       });
     }
   } catch (err) {
-    console.error('Erreur lors de la sauvegarde antivirus:', err);
+    console.error('Error saving antivirus data:', err);
     res.status(500).json({
       success: false,
       error: 'Erreur lors de la sauvegarde des données antivirus',
@@ -1259,7 +1258,7 @@ router.put('/antivirus/:clientId', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /antivirus/:clientId — Supprimer les données antivirus d'un client
+// 🗑️ DELETE /antivirus/:clientId — Delete antivirus data for a client
 // ───────────────────────────────────────────────
 router.delete('/antivirus/:clientId', async (req, res) => {
   try {
@@ -1299,7 +1298,7 @@ router.delete('/antivirus/:clientId', async (req, res) => {
       message: 'Données antivirus supprimées avec succès'
     });
   } catch (err) {
-    console.error('Erreur lors de la suppression antivirus:', err);
+    console.error('Error deleting antivirus data:', err);
     res.status(500).json({
       success: false,
       error: 'Erreur lors de la suppression des données antivirus',
@@ -1309,7 +1308,7 @@ router.delete('/antivirus/:clientId', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔍 GET /antivirus/:clientId — Récupérer les données antivirus depuis la base
+// 🔍 GET /antivirus/:clientId — Fetch antivirus data from database
 // ───────────────────────────────────────────────
 router.get('/antivirus/:clientId', async (req, res) => {
   try {
@@ -1336,7 +1335,7 @@ router.get('/antivirus/:clientId', async (req, res) => {
       }))
     });
   } catch (err) {
-    console.error('Erreur lors de la récupération antivirus:', err);
+    console.error('Error fetching antivirus data:', err);
     res.status(500).json({
       success: false,
       error: 'Erreur lors de la récupération des données antivirus',
@@ -1346,7 +1345,7 @@ router.get('/antivirus/:clientId', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📊 GET /gravityzone/:companyId/dashboard — Vue consolidée GravityZone
+// 📊 GET /gravityzone/:companyId/dashboard — Consolidated GravityZone view
 // ───────────────────────────────────────────────
 router.get('/gravityzone/:companyId/dashboard', async (req, res) => {
   try {

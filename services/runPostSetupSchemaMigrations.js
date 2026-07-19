@@ -10,11 +10,14 @@ import { ensureMailCollectSettingsSchema } from "./ensureMailCollectSettingsSche
 import { ensureIntegrationTenantsSchema } from "./ensureIntegrationTenantsSchema.js";
 import { ensureClientVaultSecretsSchema } from "./ensureClientVaultSecretsSchema.js";
 import { ensureTicketMajorIncidentSchema } from "./ensureTicketMajorIncidentSchema.js";
+import { ensureMonitoringAutomationSchema } from "./ensureMonitoringAutomationSchema.js";
+import { ensurePermissionsSchema } from "./ensurePermissionsSchema.js";
 import { runIncrementalAvrilMigrations } from "../utils/incrementalAvrilMigrations.js";
 
-/** Migrations incrémentielles (Avril/) — après installation complète uniquement. */
+/** Incremental migrations (Avril/) — after full installation only. */
 export async function runPostSetupSchemaMigrations() {
   await ensureProfilesSchema();
+  await ensurePermissionsSchema();
   await ensureTeamsSchema();
   await ensureSslSchema();
   await ensureTicketViewsSchema();
@@ -26,6 +29,7 @@ export async function runPostSetupSchemaMigrations() {
   await ensureIntegrationTenantsSchema();
   await ensureClientVaultSecretsSchema();
   await ensureTicketMajorIncidentSchema();
+  await ensureMonitoringAutomationSchema();
   try {
     await runIncrementalAvrilMigrations();
   } catch (err) {

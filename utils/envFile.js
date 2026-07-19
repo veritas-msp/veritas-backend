@@ -7,11 +7,11 @@ const BACKEND_ENV_PATH = path.join(__dirname, "..", ".env");
 const FRONTEND_ENV_PATH = path.join(__dirname, "..", "..", "veritas-frontend", ".env");
 
 const FILE_HEADERS = {
-  backend: "# Veritas Backend — configuration générée / mise à jour par l'assistant d'installation",
-  frontend: "# Veritas Frontend — configuration générée / mise à jour par l'assistant d'installation",
+  backend: "# Veritas Backend — configuration generated / updated by the setup wizard",
+  frontend: "# Veritas Frontend — configuration generated / updated by the setup wizard",
 };
 
-/** Lit un fichier .env et retourne un objet clé/valeur. */
+/** Reads a .env file and returns a key/value object. */
 function readEnvFileAt(filePath) {
   if (!fs.existsSync(filePath)) return {};
 
@@ -39,7 +39,7 @@ function readEnvFileAt(filePath) {
   return result;
 }
 
-/** Fusionne des clés dans un .env. */
+/** Merges keys into a .env file. */
 function writeEnvFileAt(filePath, updates, headerKey = "backend") {
   const current = readEnvFileAt(filePath);
   const merged = { ...current, ...updates };
@@ -55,7 +55,7 @@ function writeEnvFileAt(filePath, updates, headerKey = "backend") {
   return merged;
 }
 
-/** Écrit le .env backend et recharge process.env. */
+/** Writes the backend .env and reloads process.env. */
 export function writeEnvFile(updates) {
   const merged = writeEnvFileAt(BACKEND_ENV_PATH, updates, "backend");
 
@@ -68,12 +68,12 @@ export function writeEnvFile(updates) {
   return merged;
 }
 
-/** Écrit le .env frontend (REACT_APP_*). */
+/** Writes the frontend .env (REACT_APP_*). */
 export function writeFrontendEnvFile(updates) {
   return writeEnvFileAt(FRONTEND_ENV_PATH, updates, "frontend");
 }
 
-/** Première URL si plusieurs valeurs séparées par des virgules. */
+/** First URL when multiple values are comma-separated. */
 export function getPrimaryFrontendBaseUrl() {
   const raw = process.env.FRONTEND_BASE_URL || "http://localhost:3000";
   return String(raw).split(",")[0].trim().replace(/\/+$/, "");

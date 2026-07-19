@@ -1,10 +1,10 @@
 // ───────────────────────────────────────────────
 // 📦 Imports
 // ───────────────────────────────────────────────
-import pkg from "pg";                     // Import du module PostgreSQL
-import dotenv from "dotenv";              // Charge les variables d'environnement
+import pkg from "pg";                     // Import PostgreSQL module
+import dotenv from "dotenv";              // Load environment variables
 import { decrypt } from "../utils/encryption.js";
-dotenv.config();                          // Active .env
+dotenv.config();                          // Load .env
 
 const { Pool } = pkg;
 
@@ -19,7 +19,11 @@ function createUnavailablePool() {
 
 function createBootstrapPool(connectionString) {
   if (!connectionString || !String(connectionString).trim()) return null;
-  return new Pool({ connectionString: String(connectionString).trim() });
+  return new Pool({
+    connectionString: String(connectionString).trim(),
+    // Keep PostgreSQL error messages in English regardless of server locale.
+    options: "-c lc_messages=C",
+  });
 }
 
 bootstrapPool = createBootstrapPool(process.env.DATABASE_URL);
@@ -30,8 +34,8 @@ export function isDatabaseConfigured() {
 }
 
 // ───────────────────────────────────────────────
-// 🔁 Fonction d'initialisation dynamique
-// Elle remplace la config statique par une lecture depuis la table `settings`
+// 🔁 Dynamic initialization function
+// Replaces static config with a read from the `settings`
 // ───────────────────────────────────────────────
 export async function initDBConnection() {
   if (!bootstrapPool) {
@@ -40,19 +44,19 @@ export async function initDBConnection() {
   }
 
   try {
-    // 🔍 Lecture des paramètres DB dans la section `db` de la table `settings`
+    // Replaces static config with a read from the `settings` table
     const result = await bootstrapPool.query(
       "SELECT key, value, value_encrypted, value_iv, value_auth_tag FROM v_b_settings WHERE section IN ('db', 'database')"
     );
 
-    // Transforme le tableau de résultats en objet clé/valeur (décrypté si nécessaire)
+    // Turn result rows into a key/value object (decrypted when needed)
     const config = Object.fromEntries(result.rows.map((r) => {
       let val = r.value;
       if (r.value_encrypted && r.value_iv && r.value_auth_tag) {
         try {
           val = decrypt(r.value_encrypted, r.value_iv, r.value_auth_tag);
         } catch (e) {
-          // Erreur de déchiffrement silencieuse
+          // Silent decryption error
         }
       }
       return [r.key, val];
@@ -68,27 +72,28 @@ export async function initDBConnection() {
       throw new Error("Configuration DB incomplète dans v_b_settings");
     }
 
-    // 🎯 Création du pool final à partir des paramètres récupérés
+    // 🎯 Build the final pool from retrieved settings
     const dynamicPool = new Pool({
       host: config.db_host,
       port: parseInt(config.db_port, 10),
       database: config.db_name,
       user: config.db_user,
       password: String(config.db_password ?? ""),
+      options: "-c lc_messages=C",
     });
 
-    // ✅ Vérifie que la connexion fonctionne
+    // ✅ Verify the connection works
     await dynamicPool.query("SELECT 1");
 
-    // Réaffecte le pool global à celui-ci
+    // Reassign the global pool to this one
     pool = dynamicPool;
   } catch (err) {
-    // Fallback silencieux vers .env
+    // Silent fallback to .env
     pool = bootstrapPool ?? createUnavailablePool();
   }
 }
 
-// 🔄 Reconfigure le pool bootstrap (utilisé par l'assistant d'installation)
+// 🔄 Reconfigure the bootstrap pool (used by the setup wizard)
 export async function reconfigureBootstrapPool(connectionString) {
   if (bootstrapPool) {
     await bootstrapPool.end().catch(() => {});
@@ -100,5 +105,5 @@ export async function reconfigureBootstrapPool(connectionString) {
   }
 }
 
-// ✨ Exporte le pool utilisable dans le reste de l'app
+// ✨ Export the pool for the rest of the app
 export { pool };

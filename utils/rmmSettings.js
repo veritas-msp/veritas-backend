@@ -3,6 +3,7 @@ import { pool } from "../database/db.js";
 const RMM_SETTING_KEYS = [
   "RMM_HEARTBEAT_INTERVAL_MINUTES",
   "RMM_OFFLINE_THRESHOLD_MINUTES",
+  "RMM_ALERTS_ENABLED_ON_ENROLL",
   "RMM_COLLECT_OS",
   "RMM_COLLECT_DOMAIN",
   "RMM_COLLECT_UPDATES",
@@ -46,6 +47,7 @@ const COLLECTOR_KEYS = [
 const DEFAULTS = {
   RMM_HEARTBEAT_INTERVAL_MINUTES: 5,
   RMM_OFFLINE_THRESHOLD_MINUTES: 15,
+  RMM_ALERTS_ENABLED_ON_ENROLL: true,
   RMM_COLLECT_OS: true,
   RMM_COLLECT_DOMAIN: true,
   RMM_COLLECT_UPDATES: true,
@@ -134,6 +136,10 @@ function mapGlobalRows(byKey) {
       byKey.RMM_OFFLINE_THRESHOLD_MINUTES,
       DEFAULTS.RMM_OFFLINE_THRESHOLD_MINUTES
     ),
+    alertsEnabledOnEnroll: parseBool(
+      byKey.RMM_ALERTS_ENABLED_ON_ENROLL,
+      DEFAULTS.RMM_ALERTS_ENABLED_ON_ENROLL
+    ),
     collectors: {
       os: parseBool(byKey.RMM_COLLECT_OS, DEFAULTS.RMM_COLLECT_OS),
       domain: parseBool(byKey.RMM_COLLECT_DOMAIN, DEFAULTS.RMM_COLLECT_DOMAIN),
@@ -171,6 +177,10 @@ export function mergeRmmSettings(global, overrides = null) {
       overrides.offlineThresholdMinutes != null
         ? parseIntSetting(overrides.offlineThresholdMinutes, base.offlineThresholdMinutes)
         : base.offlineThresholdMinutes,
+    alertsEnabledOnEnroll:
+      overrides.alertsEnabledOnEnroll !== undefined && overrides.alertsEnabledOnEnroll !== null
+        ? parseBool(overrides.alertsEnabledOnEnroll, base.alertsEnabledOnEnroll)
+        : base.alertsEnabledOnEnroll,
     collectors: { ...base.collectors },
     metrics: mergeMetricsSettings(base.metrics, overrides.metrics),
     scope: "client",
@@ -241,6 +251,9 @@ export function sanitizeClientRmmOverrides(payload = {}) {
   if (payload.offlineThresholdMinutes !== undefined && payload.offlineThresholdMinutes !== null) {
     overrides.offlineThresholdMinutes = parseIntSetting(payload.offlineThresholdMinutes, null);
   }
+  if (payload.alertsEnabledOnEnroll !== undefined && payload.alertsEnabledOnEnroll !== null) {
+    overrides.alertsEnabledOnEnroll = Boolean(payload.alertsEnabledOnEnroll);
+  }
   if (payload.collectors && typeof payload.collectors === "object") {
     const collectors = {};
     for (const key of COLLECTOR_KEYS) {
@@ -299,6 +312,9 @@ export async function saveRmmSettings(payload = {}) {
   }
   if (payload.offlineThresholdMinutes !== undefined) {
     updates.push(["RMM_OFFLINE_THRESHOLD_MINUTES", String(payload.offlineThresholdMinutes)]);
+  }
+  if (payload.alertsEnabledOnEnroll !== undefined) {
+    updates.push(["RMM_ALERTS_ENABLED_ON_ENROLL", payload.alertsEnabledOnEnroll ? "true" : "false"]);
   }
   if (payload.collectors) {
     const map = {

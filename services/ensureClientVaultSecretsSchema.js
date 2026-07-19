@@ -33,7 +33,6 @@ async function applyMigrationFile(client, relPath) {
     console.warn("[vault-secrets] Migration not found:", relPath);
     return;
   }
-  console.log("[vault-secrets] Applying", relPath);
   await client.query(fs.readFileSync(filePath, "utf8"));
 }
 
@@ -57,7 +56,6 @@ export async function ensureClientVaultSecretsSchema() {
     }
 
     ensured = true;
-    console.log("[vault-secrets] Schema ready.");
     return true;
   } catch (err) {
     console.error("[vault-secrets] Automatic migration failed:", err.message);

@@ -20,7 +20,7 @@ router.get("/", async (req, res) => {
 
     return res.status(403).send("Forbidden");
   } catch (error) {
-    console.error("Erreur vérification webhook WhatsApp:", error);
+    console.error("WhatsApp webhook verification error:", error);
     return res.status(500).send("Error");
   }
 });
@@ -41,8 +41,8 @@ router.post("/", async (req, res) => {
     const results = await handleWhatsAppWebhookPayload(req.body || {});
     return res.status(200).json({ success: true, results });
   } catch (error) {
-    console.error("Erreur webhook WhatsApp:", error);
-    // Meta réessaie en cas d'erreur — on répond 200 pour éviter les boucles si traitement partiel
+    console.error("WhatsApp webhook error:", error);
+    // Meta retries on error — respond with 200 to avoid retry loops after partial processing
     return res.status(200).json({ success: false, error: error?.message || "Erreur interne" });
   }
 });

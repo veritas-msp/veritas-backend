@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📦 Route OVH — Intégration avec l'API OVH pour la gestion des domaines
+// 📦 OVH route — integration with the OVH API for domain management
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -11,11 +11,11 @@ import { getSettingsMap } from '../../utils/settingsHelper.js';
 const router = express.Router();
 
 
-// Toutes les routes OVH nécessitent une authentification
+// All OVH routes require authentication
 router.use(verifyJWT);
 
 // ───────────────────────────────────────────────
-// 🔧 Fonction utilitaire : Récupérer les settings OVH
+// 🔧 Utility function: fetch OVH settings
 // ───────────────────────────────────────────────
 async function getOvhSettings() {
   try {
@@ -55,7 +55,7 @@ async function getOvhCredentialsFromRequest(req) {
 }
 
 // ───────────────────────────────────────────────
-// 🔐 Fonction utilitaire : Créer la signature OVH
+// 🔐 Utility function: create OVH signature
 // ───────────────────────────────────────────────
 function createOvhSignature(method, url, body, timestamp, applicationSecret, consumerKey) {
   // Format OVH: $1$ + SHA1(AS + CK + METHOD + URL + BODY + TS)
@@ -66,7 +66,7 @@ function createOvhSignature(method, url, body, timestamp, applicationSecret, con
 }
 
 // ───────────────────────────────────────────────
-// 📡 Fonction utilitaire : Appel API OVH
+// 📡 Utility function: OVH API call
 // ───────────────────────────────────────────────
 async function callOvhApi(endpoint, method = 'GET', body = null, settingsOverride = null) {
   const settings = settingsOverride || await getOvhSettings();
@@ -80,7 +80,7 @@ async function callOvhApi(endpoint, method = 'GET', body = null, settingsOverrid
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const bodyString = body ? JSON.stringify(body) : '';
   
-  // Pour la signature, utiliser l'URL complète avec le protocole
+  // For the signature, use the full URL including the protocol
   const signature = createOvhSignature(
     method,
     fullUrl,
@@ -120,7 +120,7 @@ async function callOvhApi(endpoint, method = 'GET', body = null, settingsOverrid
       errorData = { message: errorText || `HTTP ${response.status}` };
     }
     
-    // Gestion spécifique de l'erreur de permissions
+    // Specific permission error handling
     if (errorData.message && (errorData.message.includes('not been granted') || errorData.message.includes('Invalid credential'))) {
       throw new Error(
         `Permissions insuffisantes pour ${method} ${endpoint}. ` +
@@ -134,7 +134,7 @@ async function callOvhApi(endpoint, method = 'GET', body = null, settingsOverrid
     throw new Error(errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`);
   }
 
-  // Si la réponse est vide (204 No Content), retourner un objet vide
+  // If the response is empty (204 No Content), return an empty object
   if (response.status === 204 || response.headers.get('content-length') === '0') {
     return {};
   }
@@ -367,7 +367,7 @@ async function fetchAllOvhDomainsWithDetails({ useCache = true } = {}) {
 }
 
 // ───────────────────────────────────────────────
-// ⚙️ GET /config — Statut de la configuration globale
+// ⚙️ GET /config — Global configuration status
 // ───────────────────────────────────────────────
 router.get('/config', async (_req, res) => {
   try {
@@ -414,11 +414,11 @@ router.post('/test', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📋 GET /ovh/domains — Récupérer la liste des domaines
+// 📋 GET /ovh/domains — Fetch domain list
 // ───────────────────────────────────────────────
 router.get('/domains', async (req, res) => {
   try {
-    // Vérifier d'abord que les paramètres sont configurés
+    // Verify that settings are configured first
     const settings = await getOvhSettings();
     if (!settings || !settings.applicationKey || !settings.applicationSecret || !settings.consumerKey) {
       return res.status(400).json({
@@ -454,13 +454,13 @@ router.get('/domains', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔄 GET /ovh/domain/:domainName — Récupérer les informations d'un domaine spécifique
+// 🔄 GET /ovh/domain/:domainName — Fetch information for a specific domain
 // ───────────────────────────────────────────────
 router.get('/domain/:domainName', async (req, res) => {
   try {
     const { domainName } = req.params;
     
-    // Vérifier d'abord que les paramètres sont configurés
+    // Verify that settings are configured first
     const settings = await getOvhSettings();
     if (!settings || !settings.applicationKey || !settings.applicationSecret || !settings.consumerKey) {
       return res.status(400).json({
@@ -486,11 +486,11 @@ router.get('/domain/:domainName', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔄 POST /ovh/domains/sync-all — Synchroniser tous les domaines OVH pour tous les clients
+// 🔄 POST /ovh/domains/sync-all — Sync all OVH domains for all clients
 // ───────────────────────────────────────────────
 router.post('/domains/sync-all', async (req, res) => {
   try {
-    // Vérifier d'abord que les paramètres sont configurés
+    // Verify that settings are configured first
     const settings = await getOvhSettings();
     if (!settings || !settings.applicationKey || !settings.applicationSecret || !settings.consumerKey) {
       return res.status(400).json({
@@ -500,11 +500,11 @@ router.post('/domains/sync-all', async (req, res) => {
       });
     }
 
-    // Récupérer tous les clients
+    // Fetch all clients
     const clientsResult = await pool.query('SELECT id, name FROM v_b_clients ORDER BY name');
     const clients = clientsResult.rows;
 
-    // Récupérer la liste des domaines depuis OVH
+    // Fetch domain list from OVH
     const domainList = await callOvhApi('/domain');
     
     if (!Array.isArray(domainList)) {
@@ -517,10 +517,10 @@ router.post('/domains/sync-all', async (req, res) => {
     let syncedCount = 0;
     let errorCount = 0;
 
-    // Pour chaque domaine OVH, récupérer les détails et sauvegarder
+    // For each OVH domain, fetch details and persist
     for (const domainName of domainList) {
       try {
-        // Récupérer les informations du domaine et l'expiration
+        // Fetch domain info and expiration
         const [domainInfo, expirationInfo] = await Promise.allSettled([
           callOvhApi(`/domain/${encodeURIComponent(domainName)}`),
           callOvhApi(`/domain/${encodeURIComponent(domainName)}/serviceInfos`).catch(() => null)
@@ -530,11 +530,11 @@ router.post('/domains/sync-all', async (req, res) => {
         const expirationData = expirationInfo.status === 'fulfilled' && expirationInfo.value ? expirationInfo.value : null;
         const expiration = expirationData?.expiration || expirationData?.expir || null;
 
-        // Trouver le client associé (par défaut, on peut utiliser le premier client ou créer une logique de mapping)
-        // Pour l'instant, on va créer un domaine pour chaque client qui a le module NDD activé
-        // ou créer un domaine global si aucun client spécifique n'est trouvé
+        // Find the associated client (by default, use the first client or add mapping logic)
+        // For now, create a domain for each client with the NDD module enabled
+        // or create a global domain when no specific client is found
         
-        // Vérifier si le domaine existe déjà
+        // Check whether the domain already exists
         const existingDomain = await pool.query(
           `SELECT id, client_id FROM v_b_clients_m_ndd 
            WHERE data->>'nom' = $1 OR data->>'name' = $1 OR item_key = $1`,
@@ -550,7 +550,7 @@ router.post('/domains/sync-all', async (req, res) => {
         };
 
         if (existingDomain.rows.length > 0) {
-          // Mettre à jour le domaine existant
+          // Update existing domain
           await pool.query(
             `UPDATE v_b_clients_m_ndd 
              SET data = $1, updated_at = NOW()
@@ -558,14 +558,14 @@ router.post('/domains/sync-all', async (req, res) => {
             [JSON.stringify(domainDataToSave), existingDomain.rows[0].id]
           );
         } else {
-          // Créer un nouveau domaine pour chaque client qui a le module NDD activé
-          // Ou créer un domaine global si aucun client spécifique
+          // Create a new domain for each client with the NDD module enabled
+          // Or create a global domain when no specific client applies
           const clientsWithNDD = await pool.query(
             `SELECT DISTINCT client_id FROM v_b_clients_m_ndd`
           );
           
           if (clientsWithNDD.rows.length > 0) {
-            // Créer le domaine pour le premier client avec NDD (ou une logique plus complexe)
+            // Create a domain for the first client with NDD (or more complex logic)
             const clientId = clientsWithNDD.rows[0].client_id;
             await pool.query(
               `INSERT INTO v_b_clients_m_ndd (client_id, item_key, data, is_active, created_at, updated_at)
@@ -573,7 +573,7 @@ router.post('/domains/sync-all', async (req, res) => {
               [clientId, domainName, JSON.stringify(domainDataToSave)]
             );
           } else {
-            // Si aucun client n'a de module NDD, créer pour le premier client
+            // If no client has the NDD module, create for the first client
             if (clients.length > 0) {
               await pool.query(
                 `INSERT INTO v_b_clients_m_ndd (client_id, item_key, data, is_active, created_at, updated_at)
@@ -586,7 +586,7 @@ router.post('/domains/sync-all', async (req, res) => {
 
         syncedCount++;
       } catch (domainError) {
-        console.error(`Erreur lors de la synchronisation du domaine ${domainName}:`, domainError);
+        console.error(`Error synchronisation du domaine ${domainName}:`, domainError);
         errorCount++;
       }
     }
@@ -599,7 +599,7 @@ router.post('/domains/sync-all', async (req, res) => {
       totalDomains: domainList.length
     });
   } catch (error) {
-    console.error('Erreur lors de la synchronisation des domaines OVH:', error);
+    console.error('Error synchronisation des domaines OVH:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Impossible de synchroniser les domaines OVH',

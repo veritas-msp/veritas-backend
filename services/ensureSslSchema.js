@@ -32,21 +32,19 @@ export async function ensureSslSchema() {
 
     const filePath = path.join(root, MIGRATION_FILE);
     if (!fs.existsSync(filePath)) {
-      console.warn("[ssl] Migration introuvable:", MIGRATION_FILE);
+      console.warn("[ssl] Migration not found:", MIGRATION_FILE);
       return;
     }
 
-    console.log("[ssl] Schéma incomplet — application de la migration certificats SSL…");
     await client.query(fs.readFileSync(filePath, "utf8"));
 
     if (!(await tableExists(client))) {
-      throw new Error("Table v_b_clients_m_ssl absente après migration");
+      throw new Error("Table v_b_clients_m_ssl missing after migration");
     }
 
     ensured = true;
-    console.log("[ssl] Schéma certificats SSL prêt.");
   } catch (err) {
-    console.error("[ssl] Échec migration automatique:", err.message);
+    console.error("[ssl] Automatic migration failed:", err.message);
   } finally {
     client.release();
   }

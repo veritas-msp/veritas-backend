@@ -106,6 +106,18 @@ export async function ensureTechNewsFeedsTable() {
     CREATE INDEX IF NOT EXISTS idx_tech_news_feeds_locale_enabled
       ON v_b_tech_news_feeds(locale, enabled, sort_order);
   `);
+  // CSV / reference installs may create the table without UNIQUE — required by ON CONFLICT
+  await pool.query(`
+    DELETE FROM v_b_tech_news_feeds a
+    USING v_b_tech_news_feeds b
+    WHERE a.ctid < b.ctid
+      AND a.locale = b.locale
+      AND a.feed_key = b.feed_key
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS v_b_tech_news_feeds_locale_feed_key_uniq
+      ON v_b_tech_news_feeds (locale, feed_key)
+  `);
   tableReady = true;
 }
 

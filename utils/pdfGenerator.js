@@ -1,6 +1,6 @@
 // ───────────────────────────────────────────────
-// 📄 Générateur de rapports PDF pour les campagnes
-// Rapport officiel — mise en page professionnelle
+// 📄 PDF report generator for campaigns
+// Official report — professional layout
 // ───────────────────────────────────────────────
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
@@ -34,13 +34,13 @@ function parseSnapshotExtra(snap) {
 }
 
 /**
- * Génère un rapport PDF officiel pour une campagne Microsoft Security
+ * Generates an official PDF report for a Microsoft Security campaign
  */
 export async function generateCampaignReportPDF(campaign, startSnapshot, endSnapshot, comparison, outputPath) {
 
   return new Promise((resolve, reject) => {
     try {
-      // Motif nid d'abeille hexagonal en background (faible opacité)
+      // Hex honeycomb background pattern (low opacity)
       doc.save();
       doc.lineWidth(1);
       doc.strokeColor('#e5e7eb');
@@ -73,7 +73,7 @@ export async function generateCampaignReportPDF(campaign, startSnapshot, endSnap
       doc.restore();
       // Centered text
       y = coverTextTop;
-      const textOffset = 40; // Décale le texte vers la droite
+      const textOffset = 40; // Shift text slightly to the right
       doc.font('Helvetica-Bold').fontSize(22).fillColor('#1a1a2e')
         .text('Rapport de campagne cybersécurité', textOffset, y, { align: 'center', width: PAGE_WIDTH - textOffset });
       y += 32;
@@ -90,43 +90,43 @@ export async function generateCampaignReportPDF(campaign, startSnapshot, endSnap
       doc.font('Helvetica-Oblique').fontSize(10).fillColor('#888')
         .text('Document confidentiel — Ne pas diffuser sans autorisation', textOffset, y, { align: 'center', width: PAGE_WIDTH - textOffset });
 
-      // Logos officiels en bas de page (PSI, CNIL, ANSSI)
+      // Official logos at bottom of page (PSI, CNIL, ANSSI)
       const yLogos = PAGE_HEIGHT - 60;
       const logoCnil = path.join(__dirname, '../../veritas-frontend/public/assets/logo/cnil.png');
       const logoAnssi = path.join(__dirname, '../../veritas-frontend/public/assets/logo/anssi.png');
       if (fs.existsSync(logoCnil)) {
-        doc.image(logoCnil, PAGE_WIDTH/2 - 90, yLogos + 40, { width: 50 }); // Descend encore plus le logo CNIL
+        doc.image(logoCnil, PAGE_WIDTH/2 - 90, yLogos + 40, { width: 50 }); // Lower CNIL logo further
       }
       if (fs.existsSync(logoAnssi)) {
         doc.image(logoAnssi, PAGE_WIDTH/2 + 40, yLogos, { width: 50 });
       }
-      // PSI logo déjà centré en haut
+      // PSI logo already centered at top
 
       doc.addPage();
-      doc.y += 60; // Ajoute un espace plus grand au-dessus du titre sur la seconde page
+      doc.y += 60; // Add extra space above title on second page
 
       // ────────────────
-      // 2. RAPPORT DÉTAILLÉ (identique à l'ancien)
+      // 2. DETAILED REPORT (same as legacy layout)
       // ────────────────
       const startExtra = parseSnapshotExtra(startSnapshot);
       const endExtra = parseSnapshotExtra(endSnapshot);
 
-      // Bandeau OFFICIEL (haut de page)
+      // OFFICIAL banner (top of page)
       doc.rect(0, 0, PAGE_WIDTH, 32).fill('#1a1a2e');
       doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(11)
         .text('DOCUMENT OFFICIEL', 0, 10, { width: PAGE_WIDTH, align: 'center' });
       doc.fillColor('#000000');
       doc.y = 50;
 
-      // Titre principal
+      // Main title
       doc.font('Helvetica-Bold').fontSize(18)
         .text('Rapport de campagne cybersécurité', MARGIN, doc.y, { align: 'left' });
-      doc.moveDown(1.2); // Ajoute un espace au-dessus de 1. Résumé exécutif
+      doc.moveDown(1.2); // Add space above section 1. Executive summary
       doc.font('Helvetica').fontSize(12)
         .text('Microsoft Security — Adoption MFA', MARGIN, doc.y, { align: 'left' });
       doc.moveDown(0.8);
 
-      // Bloc identité campagne / client
+      // Campaign / client identity block
       doc.rect(MARGIN, doc.y, CONTENT_WIDTH, 58).stroke('#cccccc');
       doc.moveDown(0.3);
       const blockTop = doc.y;
@@ -140,7 +140,7 @@ export async function generateCampaignReportPDF(campaign, startSnapshot, endSnap
       doc.y = blockTop + 62;
       doc.moveDown(0.8);
 
-      // Résumé exécutif
+      // Executive summary
       doc.font('Helvetica-Bold').fontSize(12)
         .text('1. Résumé exécutif', MARGIN, doc.y, { underline: true, align: 'left' });
       doc.moveDown(0.4);
@@ -165,7 +165,7 @@ export async function generateCampaignReportPDF(campaign, startSnapshot, endSnap
       doc.text(`Administrateurs : ${comparison.adminCount.start} → ${comparison.adminCount.end} (${comparison.adminCount.change >= 0 ? '+' : ''}${comparison.adminCount.change})`, MARGIN, doc.y, { align: 'left' });
       doc.moveDown(1);
 
-      // Snapshots Début / Fin
+      // Start / End snapshots
       doc.font('Helvetica-Bold').fontSize(12)
         .text('2. Snapshots Début et Fin', MARGIN, doc.y, { underline: true, align: 'left' });
       doc.moveDown(0.5);
@@ -196,7 +196,7 @@ export async function generateCampaignReportPDF(campaign, startSnapshot, endSnap
       doc.y = snapY + 102;
       doc.moveDown(0.8);
 
-      // Tableau comparatif
+      // Comparison table
       doc.font('Helvetica-Bold').fontSize(12)
         .text('3. Tableau comparatif', MARGIN, doc.y, { underline: true, align: 'left' });
       doc.moveDown(0.4);
@@ -237,7 +237,7 @@ export async function generateCampaignReportPDF(campaign, startSnapshot, endSnap
       doc.y = ty + 12;
       doc.moveDown(0.6);
 
-      // Évolutions
+      // Changes overview
       doc.font('Helvetica-Bold').fontSize(12)
         .text('4. Évolutions', MARGIN, doc.y, { underline: true, align: 'left' });
       doc.moveDown(0.4);
@@ -248,7 +248,7 @@ export async function generateCampaignReportPDF(campaign, startSnapshot, endSnap
       doc.text(`• MFA activé : ${comparison.mfaEnabledCount.change >= 0 ? '+' : ''}${comparison.mfaEnabledCount.change}`, MARGIN, doc.y, { align: 'left' });
       doc.moveDown(1);
 
-      // Pied de page : Document officiel
+      // Footer: official document notice
       const footerY = PAGE_HEIGHT - MARGIN - 24;
       doc.rect(0, footerY, PAGE_WIDTH, 24).fill('#f5f5f5').stroke('#ddd');
       doc.fillColor('#333333').font('Helvetica').fontSize(9)

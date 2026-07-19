@@ -231,7 +231,7 @@ export async function getTechNewsFeed(localeInput) {
       items = await loadLocaleFeeds("en");
       partial = true;
     } catch {
-      /* ignore */
+ /* ignore */
     }
   }
 

@@ -69,7 +69,7 @@ router.post("/equipment-test", verifyJWT, async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("Erreur POST /unifi/equipment-test:", err);
+    console.error("POST /unifi/equipment-test:", err);
     return res.status(500).json({
       success: false,
       error: "Erreur lors du test de connexion UniFi",

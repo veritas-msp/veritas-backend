@@ -1,6 +1,6 @@
 import { pool } from "../database/db.js";
 
-/** Clés alignées sur EnterprisesPage / equipmentFamilyConstants */
+/** Keys aligned with EnterprisesPage / equipmentFamilyConstants */
 export const EQUIPMENT_COUNT_KEYS = [
   "Ordinateurs",
   "Internet",
@@ -35,7 +35,7 @@ const MODULE_FLAG_LABELS = [
 
 const MODULE_FLAG_SQL_LIST = MODULE_FLAG_LABELS.map((label) => `'${label}'`).join(", ");
 
-/** Exclut les lignes « module activé » sans périphérique réel. */
+/** Excludes "module enabled" rows without real equipment. */
 const EXCLUDE_MODULE_FLAG_ROWS = `
   AND NOT (
     COALESCE(item_key, '') IN (${MODULE_FLAG_SQL_LIST})
@@ -67,7 +67,7 @@ const ORDINATEURS_WHERE_FALLBACK = `
   ${EXCLUDE_MODULE_FLAG_ROWS}
 `;
 
-/** Instances sauvegarde uniquement (pas les jobs CheckMK). */
+/** Instanthese backup only (not jobs CheckMK). */
 const SAUVEGARDE_COUNT_SQL = `
   SELECT client_id::text AS client_id,
          SUM(
@@ -140,7 +140,7 @@ function mergeCountRows(byClientId, rows, responseKey) {
 }
 
 /**
- * Comptage matériel par client pour EnterprisesPage (tables v_b_clients_m_*).
+ * Equipment counts per client for EnterprisesPage (v_b_clients_m_* tables).
  */
 export async function fetchEquipmentCountsByClientId() {
   const byClientId = {};
@@ -151,7 +151,7 @@ export async function fetchEquipmentCountsByClientId() {
       mergeCountRows(byClientId, rows, entry.responseKey);
     } catch (err) {
       if (err.code === "42P01" || err.code === "42703") {
-        console.warn(`[equipment-counts] ${entry.table} ignorée:`, err.message);
+        console.warn(`[equipment-counts] ${entry.table} skipped:`, err.message);
         continue;
       }
       throw err;
@@ -163,7 +163,7 @@ export async function fetchEquipmentCountsByClientId() {
     mergeCountRows(byClientId, saveRows, "Sauvegarde");
   } catch (err) {
     if (err.code === "42P01" || err.code === "42703") {
-      console.warn("[equipment-counts] v_b_clients_m_save ignorée:", err.message);
+      console.warn("[equipment-counts] v_b_clients_m_save skipped:", err.message);
     } else {
       throw err;
     }
@@ -189,7 +189,7 @@ export async function fetchEquipmentCountsByClientId() {
     }
   } catch (err) {
     if (err.code === "42P01" || err.code === "42703") {
-      console.warn("[equipment-counts] custom_equipment ignorée:", err.message);
+      console.warn("[equipment-counts] custom_equipment skipped:", err.message);
     } else {
       throw err;
     }

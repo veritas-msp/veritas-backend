@@ -1,11 +1,14 @@
 import express from 'express';
 import { pool } from '../../database/db.js';
 import verifyJWT from '../../middleware/auth.js';
+import { requirePermission } from '../../middleware/permissions.js';
 import { dispatchNotificationEvent } from "../../services/notificationDispatcher.js";
 import {
   PORTAL_USER_JOIN,
   PORTAL_USER_SELECT,
   createPortalUserForContact,
+  createPortalUserInviteForContact,
+  resendPortalInviteForContact,
   syncPortalUserFromContact,
   setPortalActive,
   deletePortalUserForContact,
@@ -167,8 +170,8 @@ function parseContactId(raw) {
   return id;
 }
 
-// GET /api/contacts/list?client_id=xxx — liste des contacts
-router.get('/list', async (req, res) => {
+// GET /api/contacts/list?client_id=xxx — list contacts
+router.get('/list', requirePermission('contacts.view'), async (req, res) => {
   const { client_id } = req.query;
   const numericClientId = client_id ? Number(client_id) : null;
 
@@ -200,8 +203,8 @@ router.get('/list', async (req, res) => {
   }
 });
 
-// GET /api/contacts?client_id=xxx — liste des contacts (filtrable par client)
-router.get('/', async (req, res) => {
+// GET /api/contacts?client_id=xxx — list contacts (filter by client)
+router.get('/', requirePermission('contacts.view'), async (req, res) => {
   const { client_id } = req.query;
   const params = [];
   const whereClause = client_id ? 'WHERE cts.client_id = $1' : '';
@@ -230,7 +233,7 @@ router.get('/', async (req, res) => {
 
 registerContactMetaRoutes(router, { invalidateContactsListCache });
 
-// ── Portail client (par contact) ─────────────────────────────────────
+// ── Client portal (per contact) ─────────────────────────────────────
 router.get('/portal/usage', verifyJWT, requireAgent, async (_req, res) => {
   try {
     if (!isCommunity()) {
@@ -259,6 +262,7 @@ router.get('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
           email: contact.portal_email,
           is_active: contact.portal_active,
           last_login_at: contact.portal_last_login,
+          password_pending: Boolean(contact.portal_pending),
         }
       : null;
     res.json({ contact_id: contactId, portal });
@@ -267,21 +271,17 @@ router.get('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
   }
 });
 
-router.post('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
+router.post('/:id/portal', verifyJWT, requireAgent, requirePermission('contacts.manage'), async (req, res) => {
   const contactId = parseContactId(req.params.id);
   if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
-  const password = String(req.body?.password || "");
-  if (!validatePortalPassword(password).valid) {
-    return res.status(400).json({ error: PORTAL_PASSWORD_ERROR });
-  }
   try {
     await assertCommunityClientPortalLimit(1);
     const contact = await loadContactById(contactId);
     if (!contact) return res.status(404).json({ error: "Contact non trouvé" });
-    const portal = await createPortalUserForContact(contact, password);
+    const portal = await createPortalUserInviteForContact(contact);
     invalidateContactsListCache(contact.client_id);
     invalidateContactsListCache(null);
-    res.status(201).json({ contact_id: contactId, portal });
+    res.status(201).json({ contact_id: contactId, portal, inviteSent: true });
   } catch (err) {
     if (err?.code?.startsWith("COMMUNITY_")) {
       return sendCommunityLimitError(res, err);
@@ -290,7 +290,20 @@ router.post('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
   }
 });
 
-router.patch('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
+router.post('/:id/portal/invite', verifyJWT, requireAgent, requirePermission('contacts.manage'), async (req, res) => {
+  const contactId = parseContactId(req.params.id);
+  if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
+  try {
+    const contact = await loadContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact non trouvé" });
+    const portal = await resendPortalInviteForContact(contactId);
+    res.json({ contact_id: contactId, portal, inviteSent: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message || "Impossible d'envoyer l'invitation." });
+  }
+});
+
+router.patch('/:id/portal', verifyJWT, requireAgent, requirePermission('contacts.manage'), async (req, res) => {
   const contactId = parseContactId(req.params.id);
   if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
   if (req.body?.is_active === undefined) {
@@ -317,7 +330,7 @@ router.patch('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
   }
 });
 
-router.patch('/:id/portal/password', verifyJWT, requireAgent, async (req, res) => {
+router.patch('/:id/portal/password', verifyJWT, requireAgent, requirePermission('contacts.manage'), async (req, res) => {
   const contactId = parseContactId(req.params.id);
   if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
   const newPassword = String(req.body?.newPassword || req.body?.password || "");
@@ -332,7 +345,7 @@ router.patch('/:id/portal/password', verifyJWT, requireAgent, async (req, res) =
   }
 });
 
-router.delete('/:id/portal', verifyJWT, requireAgent, async (req, res) => {
+router.delete('/:id/portal', verifyJWT, requireAgent, requirePermission('contacts.manage'), async (req, res) => {
   const contactId = parseContactId(req.params.id);
   if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
   try {
@@ -408,12 +421,12 @@ router.post('/:id/portal/impersonate', verifyJWT, requireRole('admin'), async (r
       impersonating: true,
     });
   } catch (err) {
-    console.error("Erreur POST /contacts/:id/portal/impersonate:", err);
+    console.error("POST /contacts/:id/portal/impersonate:", err);
     res.status(500).json({ error: err.message || "Impossible de démarrer l'impersonation." });
   }
 });
 
-// GET /api/contacts/:id/logs — Récupérer les logs d'un contact
+// GET /api/contacts/:id/logs — Fetch logs for a contact
 router.get('/:id/logs', verifyJWT, async (req, res) => {
   try {
     const { id } = req.params;
@@ -460,7 +473,7 @@ router.get('/:id/logs', verifyJWT, async (req, res) => {
   }
 });
 
-// GET /api/contacts/:id — Récupérer un contact spécifique
+// GET /api/contacts/list?client_id=xxx — list contacts
 router.get('/:id', async (req, res) => {
   const contactId = parseContactId(req.params.id);
   if (!contactId) return res.status(400).json({ error: "ID contact invalide" });
@@ -480,8 +493,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /api/contacts — Créer un contact
-router.post('/', verifyJWT, async (req, res) => {
+// POST /api/contacts — Create a contact
+router.post('/', verifyJWT, requirePermission('contacts.create'), async (req, res) => {
   try {
     await assertCommunityContactsLimit(1);
     const { nom, prenom, sexe, email, telephone, poste, statut, client_id, communications } = req.body;
@@ -536,8 +549,8 @@ router.post('/', verifyJWT, async (req, res) => {
   }
 });
 
-// PUT /api/contacts/:id — Modifier un contact
-router.put('/:id', verifyJWT, async (req, res) => {
+// PUT /api/contacts/:id — Update a contact
+router.put('/:id', verifyJWT, requirePermission('contacts.edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const contactId = Number(id);
@@ -634,7 +647,7 @@ router.put('/:id', verifyJWT, async (req, res) => {
           ]
         );
       } catch (logError) {
-        console.warn('Erreur lors de l\'enregistrement du log contact:', logError);
+        console.warn('Error writing contact log:', logError);
       }
     }
 
@@ -664,7 +677,7 @@ router.put('/:id', verifyJWT, async (req, res) => {
 });
 
 
-// DELETE /api/contacts/:id/logs — Purger les logs d'un contact
+// DELETE /api/contacts/:id/logs — Purge logs for a contact
 router.delete('/:id/logs', verifyJWT, async (req, res) => {
   try {
     const { id } = req.params;
@@ -681,8 +694,8 @@ router.delete('/:id/logs', verifyJWT, async (req, res) => {
   }
 });
 
-// DELETE /api/contacts/:id — Supprimer un contact
-router.delete('/:id', verifyJWT, async (req, res) => {
+// DELETE /api/contacts/:id — Delete a contact
+router.delete('/:id', verifyJWT, requirePermission('contacts.delete'), async (req, res) => {
   try {
     const { id } = req.params;
     const existing = await pool.query(

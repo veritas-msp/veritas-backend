@@ -21,7 +21,7 @@ export function repairRmmTextEncoding(value) {
         bestScore = score;
       }
     } catch {
-      /* ignore */
+ /* ignore */
     }
   };
 

@@ -1,7 +1,7 @@
 /**
- * Installation du schéma Veritas pour le wizard /setup.
- * Source unique : schema/schema_export.csv.
- * Les patches SQL (schema/patches/) ne sont PAS exécutés à l'installation initiale.
+ * Installs the Veritas schema for the /setup wizard.
+ * Single source: schema/schema_export.csv.
+ * SQL patches (schema/patches/) are NOT run during initial installation.
  */
 export {
   getMigrationProgress,

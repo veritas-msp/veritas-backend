@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📊 Routes de Disponibilité Check MK
+// 📊 Check MK availability routes
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -10,14 +10,14 @@ import { getCheckMKSettings, authenticateCheckMK, getHostServices, getHostStateH
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 📊 GET /api/checkmk/availability/:clientId — Récupérer les statistiques de disponibilité
+// 📊 GET /api/checkmk/availability/:clientId — Fetch availability statistics
 // ───────────────────────────────────────────────
 router.get('/availability/:clientId', verifyJWT, async (req, res) => {
   try {
     const { clientId } = req.params;
     const { start_time, end_time, equipment_id } = req.query;
     
-    // Récupérer les settings Check MK
+    // Fetch Check MK settings
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({ 
@@ -25,7 +25,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
       });
     }
     
-    // equipment_type et checkmk_site ont été supprimés de v_b_clients_host_mapping ; on utilise checkmk_host_name
+    // equipment_type and checkmk_site were removed from v_b_clients_host_mapping; use checkmk_host_name
     let query = `
       SELECT id, checkmk_host_name
        FROM v_b_clients_host_mapping
@@ -42,21 +42,21 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
       });
     }
     
-    // Authentifier auprès de Check MK
+    // Authenticate with Check MK
     const authData = await authenticateCheckMK(
       settings.apiUrl,
       settings.username,
       settings.password
     );
     
-    // Récupérer les services et statistiques pour chaque host mappé
+    // Fetch services and statistics for each mapped host
     const availabilityData = [];
     
     for (const mapping of mappingResult.rows) {
       try {
         const site = mapping.checkmk_site ?? settings.site;
         
-        // Récupérer les services du host avec leurs informations détaillées
+        // Fetch host services with detailed information
         const services = await getHostServices(
           settings.apiUrl,
           authData.auth_header,
@@ -64,8 +64,8 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           site
         );
         
-        // Analyser les services pour extraire des informations utiles
-        // Initialiser les compteurs d'abord
+        // Analyze services to extract useful information
+        // Initialize counters first
         let okCount = 0;
         let warnCount = 0;
         let critCount = 0;
@@ -75,7 +75,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           const state = service.state;
           const stateName = state === 0 ? 'ok' : state === 1 ? 'warn' : state === 2 ? 'crit' : 'unknown';
           
-          // Compter les états
+          // Count states
           if (state === 0) okCount++;
           else if (state === 1) warnCount++;
           else if (state === 2) critCount++;
@@ -102,14 +102,14 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           services: formattedServices
         };
         
-        // Calculer un état global du host basé sur les services
+        // Compute overall host state from services
         let hostState = 'ok';
         if (serviceInfo.crit > 0) hostState = 'crit';
         else if (serviceInfo.warn > 0) hostState = 'warn';
         else if (serviceInfo.unknown > 0) hostState = 'unknown';
         
-        // Calculer la note du périphérique (0-100)
-        // Basé sur la proportion de services OK vs WARN/CRIT
+        // Compute equipment score (0-100)
+        // Based on the proportion of OK vs WARN/CRIT services
         let score = 100;
         if (serviceInfo.total > 0) {
           const okRatio = serviceInfo.ok / serviceInfo.total;
@@ -125,7 +125,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           );
         }
         
-        // Extraire les métriques de performance pertinentes pour le rapport
+        // Extract relevant performance metrics for the report
         const performanceMetrics = {
           cpu: null,
           memory: null,
@@ -134,7 +134,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           network: null
         };
         
-        // Chercher les services critiques et extraire leurs métriques
+        // Find critical services and extract their metrics
         formattedServices.forEach(service => {
           const serviceTitle = (service.title || service.id || '').toLowerCase();
           
@@ -147,7 +147,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
             };
           }
           
-          // Mémoire
+          // Memory
           if (!performanceMetrics.memory && (serviceTitle.includes('memory') || serviceTitle.includes('ram') || serviceTitle.includes('mem') || serviceTitle.includes('swap'))) {
             performanceMetrics.memory = {
               state: service.stateName,
@@ -156,7 +156,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
             };
           }
           
-          // Disque
+          // Disk
           if (!performanceMetrics.disk && (serviceTitle.includes('disk') || serviceTitle.includes('filesystem') || serviceTitle.includes('c:') || serviceTitle.includes('d:'))) {
             performanceMetrics.disk = {
               state: service.stateName,
@@ -174,7 +174,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
             };
           }
           
-          // Réseau
+          // Network
           if (!performanceMetrics.network && (serviceTitle.includes('network') || serviceTitle.includes('interface') || serviceTitle.includes('traffic'))) {
             performanceMetrics.network = {
               state: service.stateName,
@@ -184,7 +184,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           }
         });
         
-        // Récupérer l'historique des états du host si une période est spécifiée
+        // Fetch host state history when a period is specified
         let hostStateHistory = null;
         if (start_time && end_time) {
           hostStateHistory = await getHostStateHistory(
@@ -197,7 +197,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           );
         }
         
-        // Calculer les statistiques supplémentaires pour le rapport
+        // Compute additional report statistics
         const statistics = {
           totalServices: serviceInfo.total,
           alertsCount: serviceInfo.warn + serviceInfo.crit,
@@ -221,13 +221,13 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           incidentsCount: hostStateHistory?.incidentsCount || 0
         };
         
-        // Calculer le temps de disponibilité basé sur l'état actuel des services
+        // Compute availability time from current service states
         if (serviceInfo.total > 0) {
           const availabilityRatio = serviceInfo.ok / serviceInfo.total;
           statistics.availabilityTime = Math.round(availabilityRatio * 100);
         }
         
-        // Chercher les mises à jour et vulnérabilités dans les services
+        // Look for updates and vulnerabilities in services
         formattedServices.forEach(service => {
           const serviceTitle = (service.title || service.id || '').toLowerCase();
           const pluginOutput = (service.pluginOutput || '').toLowerCase();
@@ -249,7 +249,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           }
         });
         
-        // Calculer les valeurs min/max/moyenne pour CPU, Mémoire, Disque
+        // Compute min/max/average for CPU, memory, and disk
         const metricValues = {
           cpu: [],
           memory: [],
@@ -289,7 +289,7 @@ router.get('/availability/:clientId', verifyJWT, async (req, res) => {
           }
         });
         
-        // Calculer min/max/moyenne
+        // Compute min/max/average
         ['cpu', 'memory', 'disk'].forEach(metric => {
           const values = metricValues[metric];
           if (values.length > 0) {

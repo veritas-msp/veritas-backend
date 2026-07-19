@@ -3,7 +3,7 @@ import { fetchRmmSettings, isAgentOnline } from "../utils/rmmSettings.js";
 import { evaluateMonitoringAlert } from "./equipmentMonitoringAlertDispatcher.js";
 
 /**
- * Met à jour agentOnline dans v_b_clients_m_ordinateurs.data selon last_seen_at des agents.
+ * Updates agentOnline in v_b_clients_m_computers.data based on agent last_seen_at.
  */
 export async function syncRmmAgentOfflineStatus() {
   const tableCheck = await pool.query(

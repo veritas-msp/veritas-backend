@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-// 📋 Routes des Services Check MK
+// 📋 Check MK service routes
 // ───────────────────────────────────────────────
 
 import express from 'express';
@@ -10,14 +10,14 @@ import { getCheckMKSettings, authenticateCheckMK, getHostServices } from './util
 const router = express.Router();
 
 // ───────────────────────────────────────────────
-// 📋 GET /api/checkmk/services/:hostName — Récupérer les services d'un host
+// 📋 GET /api/checkmk/services/:hostName — Fetch services for a host
 // ───────────────────────────────────────────────
 router.get('/services/:hostName', verifyJWT, async (req, res) => {
   try {
     const { hostName } = req.params;
     const { site, start_time, end_time } = req.query;
     
-    // Récupérer les settings Check MK
+    // Fetch Check MK settings
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({ 
@@ -25,14 +25,14 @@ router.get('/services/:hostName', verifyJWT, async (req, res) => {
       });
     }
     
-    // Authentifier auprès de Check MK
+    // Authenticate with Check MK
     const authData = await authenticateCheckMK(
       settings.apiUrl,
       settings.username,
       settings.password
     );
     
-    // Récupérer uniquement les services du host
+    // Fetch host services only
     const services = await getHostServices(
       settings.apiUrl,
       authData.auth_header,
@@ -54,24 +54,24 @@ router.get('/services/:hostName', verifyJWT, async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📋 GET /api/checkmk/service-data/:hostName/:serviceName — Récupérer les données d'un service spécifique
+// 📋 GET /api/checkmk/service-data/:hostName/:serviceName — Fetch data for a specific service
 // ───────────────────────────────────────────────
 router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) => {
   try {
     let { hostName, serviceName } = req.params;
     const { site } = req.query;
     
-    // Décoder les paramètres (ils peuvent être encodés dans l'URL)
+    // Decode parameters (they may be URL-encoded)
     hostName = decodeURIComponent(hostName);
     serviceName = decodeURIComponent(serviceName);
     
-    // Le serviceName peut être au format "hostName:serviceName", il faut extraire le nom du service
-    // Si le serviceName commence par "hostName:", on retire ce préfixe
+    // serviceName may be in "hostName:serviceName" format; extract the service name
+    // If serviceName starts with "hostName:", remove that prefix
     if (serviceName.startsWith(`${hostName}:`)) {
       serviceName = serviceName.substring(hostName.length + 1);
     }
     
-    // Récupérer les settings Check MK
+    // Fetch Check MK settings
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({ 
@@ -79,7 +79,7 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
       });
     }
     
-    // Authentifier auprès de Check MK
+    // Authenticate with Check MK
     const authData = await authenticateCheckMK(
       settings.apiUrl,
       settings.username,
@@ -88,11 +88,11 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
     
     const apiSite = site || settings.site;
     
-    // Fonction pour parser les dates depuis plugin_output
+    // Parse dates from plugin_output
     const parseDatesFromOutput = (output) => {
       if (!output) return { creation_time: null, end_time: null };
       
-      // Fonction helper pour convertir une date au format DD.MM.YYYY HH:mm:ss en ISO
+      // Helper to convert a date to ISO from DD.MM.YYYY HH:mm:ss
       const parseEuropeanDate = (dateStr) => {
         // Format: "14.11.2025 00:00:00" -> "2025-11-14T00:00:00"
         const match = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
@@ -103,11 +103,11 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
         return null;
       };
       
-      // Patterns possibles pour les dates dans le plugin_output
-      // Formats supportés:
-      // - Format européen: "Creation time: 14.11.2025 00:00:00"
+      // Possible date patterns in plugin_output
+      // Supported formats:
+      // - European format: "Creation time: 14.11.2025 00:00:00"
       // - Format ISO: "Created: 2025-01-15 10:30:00"
-      // - Format ISO avec T: "2025-01-15T10:30:00Z"
+      // - Format ISO with T: "2025-01-15T10:30:00Z"
       const creationPatterns = [
         /(?:created|creation|start|started)[\s:]+(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2})/i,
         /creation[\s_]*time[\s:]+(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2})/i,
@@ -134,7 +134,7 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
         if (match) {
           try {
             const dateStr = match[1];
-            // Vérifier si c'est le format européen
+            // Check whether this is the European format
             if (dateStr.includes('.')) {
               const isoDate = parseEuropeanDate(dateStr);
               if (isoDate) {
@@ -146,7 +146,7 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
               break;
             }
           } catch (e) {
-            // Ignorer les erreurs de parsing
+            // Ignore parsing errors
           }
         }
       }
@@ -156,7 +156,7 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
         if (match) {
           try {
             const dateStr = match[1];
-            // Vérifier si c'est le format européen
+            // Check whether this is the European format
             if (dateStr.includes('.')) {
               const isoDate = parseEuropeanDate(dateStr);
               if (isoDate) {
@@ -168,7 +168,7 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
               break;
             }
           } catch (e) {
-            // Ignorer les erreurs de parsing
+            // Ignore parsing errors
           }
         }
       }
@@ -176,14 +176,14 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
       return { creation_time, end_time };
     };
     
-    // Fonction pour récupérer les événements du service
+    // Fetch service events
     const getServiceEvents = async () => {
       try {
-        // Récupérer les événements du host depuis l'event console
+        // Fetch events host from event console
         const normalizedApiUrl = settings.apiUrl.replace(/\/+$/, '');
         const eventsUrl = `${normalizedApiUrl}/domain-types/event_console/collections/all`;
         
-        // Construire la requête pour récupérer les événements pour ce host et ce service
+        // Build the request to fetch events for this host and service
         const queryExpression = JSON.stringify({
           op: "and",
           expr: [
@@ -206,22 +206,22 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
           const data = await response.json();
           const allEvents = data.value || data.items || [];
           
-          // Filtrer les événements qui correspondent au service
+          // Filter events that match the service
           const serviceEvents = allEvents.filter(event => {
             const eventService = event.service || event.service_name || event.service_description || '';
             const normalizedEventService = String(eventService).trim();
             const normalizedServiceName = String(serviceName).trim();
             
-            // Correspondance exacte
+            // Exact match
             if (normalizedEventService === normalizedServiceName) return true;
             
-            // Correspondance avec format "host:service"
+            // Match the "host:service" format
             if (normalizedEventService === `${hostName}:${normalizedServiceName}`) return true;
             
-            // Correspondance insensible à la casse
+            // Case-insensitive match
             if (normalizedEventService.toLowerCase() === normalizedServiceName.toLowerCase()) return true;
             
-            // Correspondance partielle (le service contient le nom)
+            // Partial match (service name contains the target name)
             if (normalizedEventService.includes(normalizedServiceName) || 
                 normalizedServiceName.includes(normalizedEventService)) return true;
             
@@ -236,13 +236,13 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
       return [];
     };
     
-    // Fonction pour calculer la disponibilité
+    // Function to compute availability
     const calculateAvailability = async (serviceEvents) => {
       if (!serviceEvents || serviceEvents.length === 0) {
         return { availability_percent: null, events_count: 0 };
       }
       
-      // Calculer la disponibilité basée sur les états des événements
+      // Compute availability from event states
       // 0 = OK, 1 = WARN, 2 = CRIT, 3 = UNKNOWN
       const okEvents = serviceEvents.filter(e => (e.state || e.state_type || 0) === 0).length;
       const totalEvents = serviceEvents.length;
@@ -258,21 +258,21 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
       };
     };
     
-    // Utiliser l'endpoint view.py avec json_export pour récupérer les données du service
-    // C'est la méthode qui fonctionne le mieux pour les jobs Veeam
+    // Use the view.py endpoint with json_export to fetch service data
+    // This works best for Veeam jobs
     let serviceData = null;
     let pluginOutput = null;
     let longPluginOutput = null;
     
     try {
-      // Construire l'URL view.py pour l'export JSON
-      // L'URL de base de l'API est généralement .../check_mk/api/1.0
-      // On doit retirer /api/1.0 pour obtenir la base CheckMK, puis ajouter /view.py
+      // Build view.py URL for JSON export
+      // The API base URL is usually .../check_mk/api/1.0
+      // Strip /api/1.0 to get the CheckMK root, then append /view.py
       let baseUrl = settings.apiUrl;
       if (baseUrl.includes('/api/1.0')) {
         baseUrl = baseUrl.replace('/api/1.0', '');
       }
-      // S'assurer qu'il n'y a pas de slash final
+      // Ensure there is no trailing slash
       baseUrl = baseUrl.replace(/\/+$/, '');
       const viewPyUrl = `${baseUrl}/view.py`;
       
@@ -298,12 +298,12 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
       if (viewResponse.ok) {
         const viewData = await viewResponse.json();
         
-        // Le format est un tableau : [headers, values]
+        // Format is an array: [headers, values]
         if (Array.isArray(viewData) && viewData.length >= 2) {
           const headers = viewData[0];
           const values = viewData[1];
           
-          // Trouver les indices des colonnes qui nous intéressent
+          // Find indices for the columns we need
           const svcPluginOutputIdx = headers.indexOf('svc_plugin_output');
           const svcLongPluginOutputIdx = headers.indexOf('svc_long_plugin_output');
           const serviceStateIdx = headers.indexOf('service_state');
@@ -318,7 +318,7 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
             longPluginOutput = values[svcLongPluginOutputIdx];
           }
           
-          // Construire serviceData avec les informations disponibles
+          // Build serviceData with available information
           serviceData = {
             description: serviceDescriptionIdx >= 0 ? values[serviceDescriptionIdx] : serviceName,
             state: serviceStateIdx >= 0 ? (values[serviceStateIdx] === 'OK' ? 0 : values[serviceStateIdx] === 'WARN' ? 1 : values[serviceStateIdx] === 'CRIT' ? 2 : 3) : null,
@@ -336,7 +336,7 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
       });
     }
     
-    // Vérifier que les données ont été récupérées
+    // Verify that data was fetched
     if (!serviceData || (!pluginOutput && !longPluginOutput)) {
       return res.status(404).json({ 
         error: `Service ${serviceName} non trouvé pour le host ${hostName}`,
@@ -344,29 +344,29 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
       });
     }
     
-    // Récupérer les événements et calculer la disponibilité
+    // Fetch events and compute availability
     const serviceEvents = await getServiceEvents();
     const availability = await calculateAvailability(serviceEvents);
     
-    // Parser les dates depuis plugin_output ou long_plugin_output
+    // Parse dates from plugin_output or long_plugin_output
     const outputToParse = longPluginOutput || pluginOutput;
     const dates = parseDatesFromOutput(outputToParse);
     
-    // Formater les données du service
+    // Format service data
     const formattedData = {
       id: `${hostName}:${serviceName}`,
       title: serviceData.description || serviceName,
       description: serviceData.description || serviceName,
       state: serviceData.state,
-      state_type: null, // Non disponible dans view.py
+      state_type: null, // Not available via view.py
       plugin_output: pluginOutput,
       long_plugin_output: longPluginOutput,
       performance_data: serviceData.performance_data || null,
-      last_check: null, // Non disponible dans view.py pour le moment
-      last_state_change: null, // Non disponible dans view.py pour le moment
+      last_check: null, // Not available via view.py for now
+      last_state_change: null, // Not available via view.py for now
       host_name: hostName,
       service_name: serviceName,
-      // Événements et disponibilité
+      // Events and availability
       events_count: availability.events_count,
       availability_percent: availability.availability_percent,
       events: {
@@ -376,12 +376,12 @@ router.get('/service-data/:hostName/:serviceName', verifyJWT, async (req, res) =
         crit: availability.crit_events,
         unknown: availability.unknown_events
       },
-      // Dates extraites depuis plugin_output
+      // Dates extracted from plugin_output
       creation_time: dates.creation_time,
       end_time: dates.end_time,
-      // Conserver les données brutes
+      // Keep raw data
       raw: serviceData,
-      // Pour compatibilité avec le frontend
+      // For frontend compatibility
       output: pluginOutput,
       metrics: serviceData.performance_data || null,
       service_info: {

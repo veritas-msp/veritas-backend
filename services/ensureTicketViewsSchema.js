@@ -27,11 +27,10 @@ async function tableExists(client, tableName) {
 async function runSqlFile(client, rel) {
   const filePath = path.join(root, rel);
   if (!fs.existsSync(filePath)) {
-    console.warn(`[ticket-views] Fichier migration introuvable : ${rel}`);
+    console.warn(`[ticket-views] Migration file not found: ${rel}`);
     return;
   }
   await client.query(fs.readFileSync(filePath, "utf8"));
-  console.log(`[ticket-views] OK ${rel}`);
 }
 
 export async function ensureTicketViewsSchema() {
@@ -50,8 +49,6 @@ export async function ensureTicketViewsSchema() {
       return;
     }
 
-    console.log("[ticket-views] Schéma incomplet — application des migrations…");
-
     if (!hasViewsTable) {
       await runSqlFile(client, MIGRATION_FILES[0]);
     }
@@ -63,9 +60,8 @@ export async function ensureTicketViewsSchema() {
     }
 
     ensured = true;
-    console.log("[ticket-views] Schéma vues tickets prêt.");
   } catch (err) {
-    console.error("[ticket-views] Échec migration automatique:", err.message);
+    console.error("[ticket-views] Automatic migration failed:", err.message);
   } finally {
     client.release();
   }

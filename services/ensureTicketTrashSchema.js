@@ -68,28 +68,26 @@ export async function ensureTicketTrashSchema({ allowAutoMigrate = true } = {}) 
 
     const filePath = path.join(root, MIGRATION_FILE);
     if (!fs.existsSync(filePath)) {
-      lastFailureMessage = `Fichier migration introuvable : ${MIGRATION_FILE}`;
+      lastFailureMessage = `Migration file not found: ${MIGRATION_FILE}`;
       console.warn(`[ticket-trash] ${lastFailureMessage}`);
       return { ready: false, error: lastFailureMessage };
     }
 
-    console.log("[ticket-trash] Application de la migration corbeille tickets…");
     try {
       await client.query(fs.readFileSync(filePath, "utf8"));
       if (await refreshColumnState(client)) {
-        console.log("[ticket-trash] Corbeille tickets prête.");
         lastFailureMessage = "";
         return { ready: true };
       }
-      lastFailureMessage = "Migration exécutée mais colonnes corbeille introuvables.";
+      lastFailureMessage = "Migration ran but trash columns are still missing.";
       console.error(`[ticket-trash] ${lastFailureMessage}`);
       return { ready: false, error: lastFailureMessage };
     } catch (err) {
       lastFailureMessage = err?.message || String(err);
       console.error(
-        "[ticket-trash] Échec migration automatique:",
+        "[ticket-trash] Automatic migration failed:",
         lastFailureMessage,
-        "\n→ Relancez le serveur ou exécutez : npm run schema:incremental"
+        "\n→ Restart the server or run: npm run schema:incremental"
       );
       return { ready: false, error: lastFailureMessage };
     }

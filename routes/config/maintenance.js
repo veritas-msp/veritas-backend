@@ -101,11 +101,11 @@ async function upsertLegacyEncryptedSetting(key, plainValue) {
 }
 
 // ───────────────────────────────────────────────
-// 📤 Configuration Multer pour l'upload de backups
+// 📤 Multer configuration for backup uploads
 // ───────────────────────────────────────────────
 const backupsDir = path.join(__dirname, '../backups');
 
-// Créer le dossier backups s'il n'existe pas
+// Create backups folder if it does not exist
 fs.mkdir(backupsDir, { recursive: true }).catch(() => {});
 
 const storage = multer.diskStorage({
@@ -113,7 +113,7 @@ const storage = multer.diskStorage({
     cb(null, backupsDir);
   },
   filename: (req, file, cb) => {
-    // Garder le nom original ou ajouter un timestamp
+    // Keep original name or append a timestamp
     const originalName = file.originalname;
     const ext = path.extname(originalName);
     const name = path.basename(originalName, ext);
@@ -128,7 +128,7 @@ const upload = multer({
     fileSize: 500 * 1024 * 1024 // 500 MB max
   },
   fileFilter: (req, file, cb) => {
-    // Accepter uniquement les fichiers .sql et .dump
+    // Accept only .sql and .dump files
     if (file.originalname.endsWith('.sql') || file.originalname.endsWith('.dump')) {
       cb(null, true);
     } else {
@@ -138,26 +138,26 @@ const upload = multer({
 });
 
 // ───────────────────────────────────────────────
-// 🔧 Helper : Extraire les paramètres de connexion DB
+// 🔧 Helper: extract database connection settings
 // ───────────────────────────────────────────────
 async function getDBConnectionParams() {
-  // Priorité 1 : DATABASE_URL (pour Docker)
+  // Priority 1: DATABASE_URL (for Docker)
   if (process.env.DATABASE_URL) {
     try {
       const url = new URL(process.env.DATABASE_URL);
       return {
         host: url.hostname,
         port: url.port || '5432',
-        database: url.pathname.slice(1), // Enlever le premier /
+        database: url.pathname.slice(1), // Strip leading slash
         user: url.username,
         password: url.password
       };
     } catch (err) {
-      console.error('Erreur lors du parsing de DATABASE_URL:', err);
+      console.error('Error parsing DATABASE_URL:', err);
     }
   }
   
-  // Priorité 2 : Settings depuis la base de données
+  // Priority 2: settings from the database
   try {
     const dbSettings = await pool.query(
       `SELECT key, value, value_encrypted, value_iv, value_auth_tag FROM v_b_settings WHERE section = 'database'`
@@ -177,10 +177,10 @@ async function getDBConnectionParams() {
       };
     }
   } catch (err) {
-    console.error('Erreur lors de la lecture des settings:', err);
+    console.error('Error reading settings:', err);
   }
   
-  // Priorité 3 : Variables d'environnement
+  // Priority 3: environment variables
   return {
     host: process.env.DB_HOST || process.env.POSTGRES_HOST || 'localhost',
     port: process.env.DB_PORT || process.env.POSTGRES_PORT || '5432',
@@ -191,7 +191,7 @@ async function getDBConnectionParams() {
 }
 
 // ───────────────────────────────────────────────
-// 🔧 GET /status — Statut de la maintenance
+// 🔧 GET /status — Maintenance status
 // ───────────────────────────────────────────────
 router.get('/status', async (req, res) => {
   try {
@@ -286,7 +286,7 @@ router.get('/status', async (req, res) => {
     
     res.json({
       enabled: isEnabled,
-      maintenanceMode: isEnabled, // Pour compatibilité
+      maintenanceMode: isEnabled, // Backward compatibility
       message: message,
       tickerSpeed,
       tickerDirection,
@@ -299,11 +299,11 @@ router.get('/status', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🔧 POST /toggle — Activer/Désactiver maintenance
+// 🔧 POST /toggle — Enable/disable maintenance
 // ───────────────────────────────────────────────
 router.post('/toggle', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    // Accepter les deux formats pour compatibilité
+    // Accept both payload formats for backward compatibility
     const enable = req.body.enable !== undefined ? req.body.enable : req.body.enabled;
     const maintenanceMessage = req.body.maintenanceMessage || req.body.message;
     const rawTickerSpeed = req.body.tickerSpeed;
@@ -421,7 +421,7 @@ router.post('/toggle', verifyJWT, requireRole('admin'), async (req, res) => {
     res.json({ 
       success: true, 
       enabled: enable,
-      maintenanceMode: enable // Pour compatibilité
+      maintenanceMode: enable // Backward compatibility
     });
   } catch (err) {
     let currentDb = null;
@@ -453,12 +453,12 @@ router.post('/toggle', verifyJWT, requireRole('admin'), async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 💾 GET /backups — Liste des sauvegardes
+// 💾 GET /backups — List backups
 // ───────────────────────────────────────────────
 router.get('/backups', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
     
-    // Créer le dossier s'il n'existe pas
+    // Create folder if it does not exist
     try {
       await fs.access(backupsDir);
     } catch {
@@ -481,7 +481,7 @@ router.get('/backups', verifyJWT, requireRole('admin'), async (req, res) => {
       }
     }
     
-    // Trier par date de création (plus récent en premier)
+    // Sort by creation date (newest first)
     backups.sort((a, b) => b.created_at - a.created_at);
     
     res.json(backups);
@@ -491,7 +491,7 @@ router.get('/backups', verifyJWT, requireRole('admin'), async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📥 POST /backup/upload — Uploader un backup
+// 📥 POST /backup/upload — Upload a backup
 // ───────────────────────────────────────────────
 router.post('/backup/upload', verifyJWT, requireRole('admin'), upload.single('backup'), async (req, res) => {
   try {
@@ -509,7 +509,7 @@ router.post('/backup/upload', verifyJWT, requireRole('admin'), upload.single('ba
       created_at: stats.birthtime
     });
   } catch (err) {
-    // Supprimer le fichier en cas d'erreur
+    // Delete file on error
     if (req.file) {
       try {
         await fs.unlink(req.file.path);
@@ -520,30 +520,30 @@ router.post('/backup/upload', verifyJWT, requireRole('admin'), upload.single('ba
 });
 
 // ───────────────────────────────────────────────
-// 💾 POST /backup — Créer une sauvegarde
+// 💾 POST /backup — Create a backup
 // ───────────────────────────────────────────────
 router.post('/backup', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    // S'assurer que le dossier backups existe
+    // Ensure the backups folder exists
     try {
       await fs.access(backupsDir);
     } catch {
       await fs.mkdir(backupsDir, { recursive: true });
     }
     
-    // Récupérer les paramètres de connexion DB
+    // Fetch database connection settings
     const dbParams = await getDBConnectionParams();
     
     if (!dbParams.database || !dbParams.user) {
       return res.status(400).json({ error: 'Paramètres de base de données manquants' });
     }
     
-    // Générer le nom de fichier avec timestamp
+    // Generate filename with timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const filename = `backup-${timestamp}.sql`;
     const filepath = path.join(backupsDir, filename);
     
-    // Vérifier que pg_dump est disponible (tester avec --version qui fonctionne sur tous les OS)
+    // Check that pg_dump is available (test with --version, works on all OS)
     try {
       await assertPgTool('pg_dump');
     } catch {
@@ -552,7 +552,7 @@ router.post('/backup', verifyJWT, requireRole('admin'), async (req, res) => {
       });
     }
     
-    // Créer la sauvegarde avec pg_dump (format SQL plain)
+    // Create backup with pg_dump (format SQL plain)
     const pgDumpArgs = [
       '-h', dbParams.host,
       '-p', String(dbParams.port),
@@ -561,12 +561,12 @@ router.post('/backup', verifyJWT, requireRole('admin'), async (req, res) => {
       '-F', 'p', // format plain SQL
       '--clean',
       '--if-exists',
-      '-f', filepath, // fichier de sortie
+      '-f', filepath, // Output file
     ];
 
     const { stdout, stderr } = await runPgTool('pg_dump', pgDumpArgs, dbParams);
     
-    // Vérifier que le fichier existe et n'est pas vide
+    // Check that the file exists and is not empty
     let stats;
     try {
       stats = await fs.stat(filepath);
@@ -588,7 +588,7 @@ router.post('/backup', verifyJWT, requireRole('admin'), async (req, res) => {
       created_at: stats.birthtime
     });
   } catch (err) {
-    console.error('Erreur lors de la création de la sauvegarde:', err);
+    console.error('Error creating backup:', err);
     const errorMessage = err.stderr || err.message || 'Erreur inconnue';
     res.status(500).json({ 
       error: 'Erreur lors de la création de la sauvegarde: ' + errorMessage,
@@ -598,7 +598,7 @@ router.post('/backup', verifyJWT, requireRole('admin'), async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 🗑️ DELETE /backup/:filename — Supprimer une sauvegarde
+// 🗑️ DELETE /backup/:filename — Delete a backup
 // ───────────────────────────────────────────────
 router.delete('/backup/:filename', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
@@ -608,37 +608,37 @@ router.delete('/backup/:filename', verifyJWT, requireRole('admin'), async (req, 
       return res.status(400).json({ error: 'Nom de fichier requis' });
     }
     
-    // Sécuriser le nom de fichier pour éviter les path traversal
+    // Sanitize filename to prevent path traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
       return res.status(400).json({ error: 'Nom de fichier invalide' });
     }
     
     const filepath = path.join(backupsDir, filename);
     
-    // Vérifier que le fichier existe
+    // Check that the file exists
     try {
       await fs.access(filepath);
     } catch {
       return res.status(404).json({ error: 'Fichier de sauvegarde introuvable' });
     }
     
-    // Vérifier que c'est bien un fichier de sauvegarde
+    // Verify this is a backup file
     if (!filename.endsWith('.sql') && !filename.endsWith('.dump')) {
       return res.status(400).json({ error: 'Type de fichier non autorisé' });
     }
     
-    // Supprimer le fichier
+    // Delete file
     await fs.unlink(filepath);
     
     res.json({ success: true, message: 'Sauvegarde supprimée avec succès' });
   } catch (err) {
-    console.error('Erreur lors de la suppression de la sauvegarde:', err);
+    console.error('Error deleting backup:', err);
     res.status(500).json({ error: 'Erreur lors de la suppression: ' + err.message });
   }
 });
 
 // ───────────────────────────────────────────────
-// 🔄 POST /restore — Restaurer une sauvegarde
+// 🔄 POST /restore — Restore a backup
 // ───────────────────────────────────────────────
 router.post('/restore', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
@@ -648,50 +648,50 @@ router.post('/restore', verifyJWT, requireRole('admin'), async (req, res) => {
       return res.status(400).json({ error: 'Nom de fichier requis' });
     }
     
-    // Sécuriser le nom de fichier pour éviter les path traversal
+    // Sanitize filename to prevent path traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
       return res.status(400).json({ error: 'Nom de fichier invalide' });
     }
     
     const filepath = path.join(backupsDir, filename);
     
-    // Vérifier que le fichier existe
+    // Check that the file exists
     try {
       await fs.access(filepath);
     } catch {
       return res.status(404).json({ error: 'Fichier de sauvegarde introuvable' });
     }
     
-    // Vérifier que c'est bien un fichier de sauvegarde
+    // Verify this is a backup file
     if (!filename.endsWith('.sql') && !filename.endsWith('.dump')) {
       return res.status(400).json({ error: 'Type de fichier non autorisé' });
     }
     
-    // Récupérer les paramètres de connexion DB
+    // Fetch database connection settings
     const dbParams = await getDBConnectionParams();
     
     if (!dbParams.database || !dbParams.user) {
       return res.status(400).json({ error: 'Paramètres de base de données manquants' });
     }
     
-    // Arrêter toutes les connexions actives à la base de données (optionnel, continue même en cas d'erreur)
+    // Terminate active connections to the database (optional; continue on error)
     try {
       await pool.query(`
         SELECT pg_terminate_backend(pid)
         FROM pg_stat_activity
         WHERE datname = $1 AND pid <> pg_backend_pid()
       `, [dbParams.database]);
-      console.log('Connexions actives terminées avec succès');
+      console.log('Active connections terminated');
     } catch (err) {
-      // C'est juste un avertissement, on continue quand même
-      console.warn('Avertissement lors de l\'arrêt des connexions:', err.message);
-      console.warn('La restauration va continuer, mais certaines connexions peuvent rester actives');
+      // This is only a warning; continue anyway
+      console.warn('Warning stopping connections:', err.message);
+      console.warn('Restore will continue, but some connections may remain active');
     }
     
-    // Déterminer le format du fichier
+    // Determine the file format
     const isDump = filename.endsWith('.dump');
     
-    // Vérifier que les outils nécessaires sont disponibles
+    // Ensure required tools are available
     try {
       if (isDump) {
         await assertPgTool('pg_restore');
@@ -705,7 +705,7 @@ router.post('/restore', verifyJWT, requireRole('admin'), async (req, res) => {
       });
     }
     
-    // Construire la commande de restauration
+    // Build the restore command
     let restoreCommand;
     let restoreArgs;
     if (isDump) {
@@ -732,25 +732,25 @@ router.post('/restore', verifyJWT, requireRole('admin'), async (req, res) => {
       ];
     }
 
-    // Exécuter la commande de restauration
-    console.log(`Début de la restauration: ${filename}`);
+    // Run the restore command
+    console.log(`Restore started: ${filename}`);
     const { stdout, stderr } = await runPgTool(restoreCommand, restoreArgs, dbParams, {
       maxBuffer: 50 * 1024 * 1024,
     });
     
-    // Afficher les sorties pour le débogage
+    // Print output for debugging
     if (stdout) {
-      console.log('Sortie de la restauration:', stdout);
+      console.log('Restore stdout:', stdout);
     }
     if (stderr && !stderr.includes('NOTICE')) {
-      // Les NOTICE sont normaux, on ne les considère pas comme des erreurs
-      console.warn('Avertissements lors de la restauration:', stderr);
+      // NOTICE messages are normal; do not treat them as errors
+      console.warn('Restore warnings:', stderr);
     }
     
-    console.log(`Restauration terminée avec succès: ${filename}`);
+    console.log(`Restore completed: ${filename}`);
     res.json({ success: true, message: 'Sauvegarde restaurée avec succès' });
   } catch (err) {
-    console.error('Erreur lors de la restauration:', err);
+    console.error('Error restore:', err);
     const errorMessage = err.stderr || err.message || 'Erreur inconnue';
     res.status(500).json({ 
       error: 'Erreur lors de la restauration: ' + errorMessage,
@@ -760,7 +760,7 @@ router.post('/restore', verifyJWT, requireRole('admin'), async (req, res) => {
 });
 
 // ───────────────────────────────────────────────
-// 📥 GET /backup/plan — Récupérer le plan de sauvegarde
+// 📥 GET /backup/plan — Fetch backup schedule
 // ───────────────────────────────────────────────
 router.get('/backup/plan', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
@@ -789,7 +789,7 @@ router.get('/backup/plan', verifyJWT, requireRole('admin'), async (req, res) => 
 });
 
 // ───────────────────────────────────────────────
-// 💾 POST /backup/plan — Sauvegarder le plan de sauvegarde
+// 💾 POST /backup/plan — Save backup schedule
 // ───────────────────────────────────────────────
 router.post('/backup/plan', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
@@ -816,7 +816,7 @@ router.post('/backup/plan', verifyJWT, requireRole('admin'), async (req, res) =>
 });
 
 // ───────────────────────────────────────────────
-// 🚀 POST /deploy — Exécuter le script de déploiement
+// 🚀 POST /deploy — Run deployment script
 // ───────────────────────────────────────────────
 router.post('/deploy', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
@@ -827,7 +827,7 @@ router.post('/deploy', verifyJWT, requireRole('admin'), async (req, res) => {
       });
     }
 
-    console.log('Exécution du script de déploiement...');
+    console.log('Running deploy script...');
 
     const { stdout, stderr } = await execFileAsync(deployScript, [], {
       timeout: 300000,
@@ -836,7 +836,7 @@ router.post('/deploy', verifyJWT, requireRole('admin'), async (req, res) => {
     });
     
     if (stderr && !stderr.includes('WARNING')) {
-      console.error('Erreur lors du déploiement:', stderr);
+      console.error('Error déploiement:', stderr);
       return res.status(500).json({ 
         error: 'Erreur lors du déploiement', 
         details: stderr,
@@ -844,7 +844,7 @@ router.post('/deploy', verifyJWT, requireRole('admin'), async (req, res) => {
       });
     }
     
-    console.log('Déploiement terminé avec succès');
+    console.log('Deploy completed');
     res.json({ 
       success: true, 
       message: 'Déploiement terminé avec succès',
@@ -852,7 +852,7 @@ router.post('/deploy', verifyJWT, requireRole('admin'), async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (err) {
-    console.error('Erreur lors de l\'exécution du script de déploiement:', err);
+    console.error('Error running deploy script:', err);
     res.status(500).json({ 
       error: 'Erreur lors du déploiement', 
       details: err.message,

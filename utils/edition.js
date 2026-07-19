@@ -1,4 +1,4 @@
-/** Édition Veritas — community (OSS) ou pro (licence commerciale). */
+/** Veritas edition — community (OSS) or pro (commercial license). */
 
 import {
   getLicensePublicSummary,
