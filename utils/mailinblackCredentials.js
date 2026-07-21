@@ -1,8 +1,10 @@
 import { pool } from '../database/db.js';
 import { decrypt } from './encryption.js';
 import { getSettingsMap } from './settingsHelper.js';
-
-export async function resolveMailinblackCredentials({ clientId, mailinblackTenantId } = {}) {
+export async function resolveMailinblackCredentials({
+  clientId,
+  mailinblackTenantId
+} = {}) {
   if (mailinblackTenantId) {
     const params = [mailinblackTenantId];
     let query = `
@@ -16,12 +18,12 @@ export async function resolveMailinblackCredentials({ clientId, mailinblackTenan
     }
     const result = await pool.query(query, params);
     if (result.rows.length === 0) {
-      throw new Error('Tenant Mailinblack dédié introuvable');
+      throw new Error('Dedicated Mailinblack tenant not found');
     }
     const row = result.rows[0];
     const authKey = decrypt(row.api_key_encrypted, row.iv, row.auth_tag);
     if (!authKey) {
-      throw new Error('Impossible de déchiffrer la clé auth Mailinblack');
+      throw new Error('Unable to decrypt the Mailinblack authentication key');
     }
     return {
       apiUrl: row.api_url,
@@ -30,24 +32,16 @@ export async function resolveMailinblackCredentials({ clientId, mailinblackTenan
       authClientId: row.auth_client_id || null,
       source: 'dedicated',
       mailinblackTenantId: row.id,
-      clientId: row.client_id,
+      clientId: row.client_id
     };
   }
-
-  const settings = await getSettingsMap([
-    'MAILINBLACK_API_KEY',
-    'MAILINBLACK_API_URL',
-    'MAILINBLACK_CLIENT_ID',
-  ]);
+  const settings = await getSettingsMap(['MAILINBLACK_API_KEY', 'MAILINBLACK_API_URL', 'MAILINBLACK_CLIENT_ID']);
   const authKey = settings.MAILINBLACK_API_KEY || process.env.MAILINBLACK_API_KEY;
   const apiUrl = settings.MAILINBLACK_API_URL || process.env.MAILINBLACK_API_URL;
-  const authClientId =
-    settings.MAILINBLACK_CLIENT_ID || process.env.MAILINBLACK_CLIENT_ID || null;
-
+  const authClientId = settings.MAILINBLACK_CLIENT_ID || process.env.MAILINBLACK_CLIENT_ID || null;
   if (!authKey || !apiUrl) {
-    throw new Error('API Mailinblack globale non configurée');
+    throw new Error('Global Mailinblack API is not configured');
   }
-
   return {
     apiUrl,
     authKey,
@@ -55,23 +49,17 @@ export async function resolveMailinblackCredentials({ clientId, mailinblackTenan
     authClientId,
     source: 'global',
     mailinblackTenantId: null,
-    clientId: clientId || null,
+    clientId: clientId || null
   };
 }
-
 export async function getGlobalMailinblackConfigStatus() {
-  const settings = await getSettingsMap([
-    'MAILINBLACK_API_KEY',
-    'MAILINBLACK_API_URL',
-    'MAILINBLACK_CLIENT_ID',
-  ]);
+  const settings = await getSettingsMap(['MAILINBLACK_API_KEY', 'MAILINBLACK_API_URL', 'MAILINBLACK_CLIENT_ID']);
   const authKey = settings.MAILINBLACK_API_KEY || process.env.MAILINBLACK_API_KEY;
   const apiUrl = settings.MAILINBLACK_API_URL || process.env.MAILINBLACK_API_URL;
-  const authClientId =
-    settings.MAILINBLACK_CLIENT_ID || process.env.MAILINBLACK_CLIENT_ID || null;
+  const authClientId = settings.MAILINBLACK_CLIENT_ID || process.env.MAILINBLACK_CLIENT_ID || null;
   return {
     configured: Boolean(authKey && apiUrl),
     apiUrl: apiUrl || null,
-    authClientId: authClientId || null,
+    authClientId: authClientId || null
   };
 }

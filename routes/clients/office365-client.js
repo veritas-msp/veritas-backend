@@ -3,43 +3,29 @@ import { pool } from "../../database/db.js";
 import verifyJWT from "../../middleware/auth.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
 import { dispatchNotificationEvent } from "../../services/notificationDispatcher.js";
-
-// Import functions from office365.js
 let getClientOffice365Credentials, getOffice365Settings, getMicrosoftGraphToken;
-
-// Load functions asynchronously
 (async () => {
   const office365Module = await import("../integrations/office365.js");
   getClientOffice365Credentials = office365Module.getClientOffice365Credentials || (async () => null);
   getOffice365Settings = office365Module.getOffice365Settings || (async () => null);
   getMicrosoftGraphToken = office365Module.getMicrosoftGraphToken;
 })();
-
 const router = express.Router();
-
-// All routes require authentication
 router.use(verifyJWT);
-
-/**
- * POST /api/client-office365/test-credentials
- * Tests Office 365 connection with provided credentials (without saving)
- */
 router.post("/test-credentials", async (req, res) => {
   try {
-    const { tenantId, clientIdAzure, clientSecret, secretKeyId } = req.body;
-
-    // Validate input
+    const {
+      tenantId,
+      clientIdAzure,
+      clientSecret,
+      secretKeyId
+    } = req.body;
     if (!tenantId || !clientIdAzure || !clientSecret) {
       return res.status(400).json({
         success: false,
-        error: "Tenant ID, Client ID Azure et Client Secret sont requis"
+        error: "Tenant ID, Client ID Azure et Client Secret are required"
       });
     }
-
-    // Decryption is not needed here because credentials are not encrypted
-    // (they come directly from the form and are not saved)
-
-    // Test connection by calling Microsoft Graph directly
     const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
     const params = new URLSearchParams({
       client_id: clientIdAzure,
@@ -47,26 +33,24 @@ router.post("/test-credentials", async (req, res) => {
       client_secret: clientSecret,
       grant_type: "client_credentials"
     });
-
     const fetch = (await import("node-fetch")).default;
     const tokenResponse = await fetch(tokenUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
       body: params.toString()
     });
-
     if (!tokenResponse.ok) {
-      // Fetch detailed error message from Microsoft
-      let errorMessage = `Erreur d'authentification Microsoft (${tokenResponse.status})`;
+      let errorMessage = `Microsoft authentication error (${tokenResponse.status})`;
       let microsoftError = null;
-
       try {
         const errorData = await tokenResponse.json();
         microsoftError = errorData;
         if (errorData.error_description) {
           errorMessage = `${errorData.error_description}`;
         } else if (errorData.error) {
-          errorMessage = `Erreur: ${errorData.error}`;
+          errorMessage = `Error: ${errorData.error}`;
           if (errorData.error_description) {
             errorMessage += ` - ${errorData.error_description}`;
           }
@@ -77,14 +61,10 @@ router.post("/test-credentials", async (req, res) => {
           errorMessage = errorText;
         }
       }
-
       throw new Error(errorMessage);
     }
-
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
-
-    // Test with a call to the Graph API
     const graphResponse = await fetch("https://graph.microsoft.com/v1.0/organization", {
       method: "GET",
       headers: {
@@ -92,70 +72,51 @@ router.post("/test-credentials", async (req, res) => {
         "Content-Type": "application/json"
       }
     });
-
     if (!graphResponse.ok) {
-      throw new Error(`Erreur Microsoft Graph API: ${graphResponse.status}`);
+      throw new Error(`Microsoft Graph API error: ${graphResponse.status}`);
     }
-
     const orgInfo = await graphResponse.json();
-
-    // Also fetch application name
     let applicationDisplayName = null;
     try {
-      const appResponse = await fetch(
-        `https://graph.microsoft.com/v1.0/applications(appId='${clientIdAzure}')?$select=displayName`,
-        {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${accessToken}`,
-            "Content-Type": "application/json"
-          }
+      const appResponse = await fetch(`https://graph.microsoft.com/v1.0/applications(appId='${clientIdAzure}')?$select=displayName`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
         }
-      );
+      });
       if (appResponse.ok) {
         const appData = await appResponse.json();
         applicationDisplayName = appData.displayName;
       }
-    } catch (e) {
-      // Ignore error if application name cannot be fetched
-    }
-
+    } catch (e) {}
     res.json({
       success: true,
-      message: "Connexion à Microsoft Graph API réussie",
+      message: "Successfully connected to Microsoft Graph API",
       organization: orgInfo.value?.[0]?.displayName || "Organisation inconnue",
       applicationDisplayName: applicationDisplayName
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message || "Erreur lors du test de connexion"
+      error: error.message || "Error testing connection"
     });
   }
 });
-
-/**
- * GET /api/client-office365/:clientId
- * Fetches Office 365 credentials for a client (without secret)
- */
 router.get("/:clientId", async (req, res) => {
   try {
-    const { clientId } = req.params;
-    
-    const result = await pool.query(
-      `SELECT id, client_id, tenant_id, client_id_azure, secret_key_id, created_at, updated_at
+    const {
+      clientId
+    } = req.params;
+    const result = await pool.query(`SELECT id, client_id, tenant_id, client_id_azure, secret_key_id, created_at, updated_at
        FROM v_b_clients_azure
-       WHERE client_id = $1`,
-      [clientId]
-    );
-    
+       WHERE client_id = $1`, [clientId]);
     if (result.rows.length === 0) {
       return res.json({
         success: true,
         credentials: null
       });
     }
-    
     const cred = result.rows[0];
     res.json({
       success: true,
@@ -165,7 +126,7 @@ router.get("/:clientId", async (req, res) => {
         tenantId: cred.tenant_id,
         clientIdAzure: cred.client_id_azure,
         secretKeyId: cred.secret_key_id,
-        hasSecret: true, // Indicates a secret is configured (but it is not returned)
+        hasSecret: true,
         createdAt: cred.created_at,
         updatedAt: cred.updated_at
       }
@@ -173,39 +134,30 @@ router.get("/:clientId", async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message || "Erreur lors de la récupération des credentials"
+      error: error.message || "Error retrieving credentials"
     });
   }
 });
-
-/**
- * POST /api/client-office365/:clientId
- * Creates or updates Office 365 credentials for a client
- */
 router.post("/:clientId", async (req, res) => {
   try {
-    const { clientId } = req.params;
-    const { tenantId, clientIdAzure, clientSecret, secretKeyId } = req.body;
-
-    // Validate input
+    const {
+      clientId
+    } = req.params;
+    const {
+      tenantId,
+      clientIdAzure,
+      clientSecret,
+      secretKeyId
+    } = req.body;
     if (!tenantId || !clientIdAzure) {
       return res.status(400).json({
         success: false,
-        error: "Tenant ID et Client ID Azure sont requis"
+        error: "Tenant ID et Client ID Azure are required"
       });
     }
-
-    // Check whether credentials already exist
-    const existingResult = await pool.query(
-      "SELECT id, client_secret_encrypted, iv, auth_tag FROM v_b_clients_azure WHERE client_id = $1",
-      [clientId]
-    );
-
+    const existingResult = await pool.query("SELECT id, client_secret_encrypted, iv, auth_tag FROM v_b_clients_azure WHERE client_id = $1", [clientId]);
     let finalClientSecret = clientSecret;
     let needsEncryption = true;
-
-    // If credentials exist and no new secret is provided,
-    // keep the existing secret
     if (existingResult.rows.length > 0 && !clientSecret) {
       const existingCred = existingResult.rows[0];
       finalClientSecret = {
@@ -217,185 +169,114 @@ router.post("/:clientId", async (req, res) => {
     } else if (!clientSecret) {
       return res.status(400).json({
         success: false,
-        error: "Le Client Secret est obligatoire pour configurer Office365 pour la première fois. Veuillez le saisir dans le champ 'Valeur du secret (client secret)'."
+        error: "Client Secret is required to configure Office365 for the first time. Please enter it in the 'Secret value (client secret)' field."
       });
     }
-    
-    // Check that the client exists
-    const clientResult = await pool.query(
-      "SELECT id FROM v_b_clients WHERE id = $1",
-      [clientId]
-    );
-
+    const clientResult = await pool.query("SELECT id FROM v_b_clients WHERE id = $1", [clientId]);
     if (clientResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: "Client non trouvé"
+        error: "Client not found"
       });
     }
-
-    // Normalize secretKeyId: convert empty string to null
     const normalizedSecretKeyId = secretKeyId && secretKeyId.trim() !== "" ? secretKeyId.trim() : null;
-
-    // Prepare encryption payload
     let encryptedData;
     if (needsEncryption) {
       encryptedData = encrypt(finalClientSecret);
       if (!encryptedData) {
         return res.status(500).json({
           success: false,
-          error: "Erreur lors du chiffrement du secret"
+          error: "Error encrypting secret"
         });
       }
     } else {
-      // Reuse existing encrypted data
       encryptedData = finalClientSecret;
     }
-
     if (existingResult.rows.length > 0) {
-      // Update
-      await pool.query(
-        `UPDATE v_b_clients_azure
+      await pool.query(`UPDATE v_b_clients_azure
          SET tenant_id = $1, client_id_azure = $2, client_secret_encrypted = $3, iv = $4, auth_tag = $5, secret_key_id = $6
-         WHERE client_id = $7`,
-        [
-          tenantId,
-          clientIdAzure,
-          encryptedData.encrypted,
-          encryptedData.iv,
-          encryptedData.authTag,
-          normalizedSecretKeyId,
-          clientId
-        ]
-      );
+         WHERE client_id = $7`, [tenantId, clientIdAzure, encryptedData.encrypted, encryptedData.iv, encryptedData.authTag, normalizedSecretKeyId, clientId]);
     } else {
-      // Create
-      await pool.query(
-        `INSERT INTO v_b_clients_azure
+      await pool.query(`INSERT INTO v_b_clients_azure
          (client_id, tenant_id, client_id_azure, client_secret_encrypted, iv, auth_tag, secret_key_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          clientId,
-          tenantId,
-          clientIdAzure,
-          encryptedData.encrypted,
-          encryptedData.iv,
-          encryptedData.authTag,
-          normalizedSecretKeyId
-        ]
-      );
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`, [clientId, tenantId, clientIdAzure, encryptedData.encrypted, encryptedData.iv, encryptedData.authTag, normalizedSecretKeyId]);
     }
-    
     res.json({
       success: true,
-      message: "Credentials Office 365 enregistrés avec succès"
+      message: "Office 365 credentials saved successfully"
     });
-
     await dispatchNotificationEvent({
       source: "services",
       element: "tenant_updated",
       enterpriseId: String(clientId || ""),
       user: req.user,
       context: {
-        entreprise: { id: String(clientId || "") },
+        entreprise: {
+          id: String(clientId || "")
+        },
         tenantId,
-        clientIdAzure,
-      },
+        clientIdAzure
+      }
     }).catch(() => {});
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message || "Erreur lors de l'enregistrement des credentials"
+      error: error.message || "Error saving credentials"
     });
   }
 });
-
-/**
- * DELETE /api/client-office365/:clientId
- * Deletes Office 365 credentials for a client
- */
 router.delete("/:clientId", async (req, res) => {
   try {
-    const { clientId } = req.params;
-
-    // Delete from possible tables (old and new)
-    await pool.query(
-      "DELETE FROM v_b_clients_azure WHERE client_id = $1",
-      [clientId]
-    );
-
-    // Also delete from legacy v_b_clients_azure if it exists
+    const {
+      clientId
+    } = req.params;
+    await pool.query("DELETE FROM v_b_clients_azure WHERE client_id = $1", [clientId]);
     try {
-      await pool.query(
-        "DELETE FROM v_b_clients_azure WHERE client_id = $1",
-        [clientId]
-      );
+      await pool.query("DELETE FROM v_b_clients_azure WHERE client_id = $1", [clientId]);
     } catch (e) {
-      // Ignore error if table does not exist or has a different structure
       console.log("Note: v_b_clients_azure might not exist or have different structure");
     }
-
     res.json({
       success: true,
-      message: "Credentials Office 365 supprimés avec succès"
+      message: "Office 365 credentials deleted successfully"
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message || "Erreur lors de la suppression des credentials"
+      error: error.message || "Error deleting credentials"
     });
   }
 });
-
-/**
- * GET /api/client-office365/:clientId/test
- * Tests Office 365 connection with client credentials
- */
 router.get("/:clientId/test", async (req, res) => {
   try {
-    const { clientId } = req.params;
-    
-    // Fetch encrypted credentials
-    const result = await pool.query(
-      `SELECT tenant_id, client_id_azure, client_secret_encrypted, iv, auth_tag
+    const {
+      clientId
+    } = req.params;
+    const result = await pool.query(`SELECT tenant_id, client_id_azure, client_secret_encrypted, iv, auth_tag
        FROM v_b_clients_azure
-       WHERE client_id = $1`,
-      [clientId]
-    );
-    
+       WHERE client_id = $1`, [clientId]);
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: "Aucun credential Office 365 configuré pour ce client"
+        error: "No Office 365 credential configured for this client"
       });
     }
-    
     const cred = result.rows[0];
-    
-    // Decrypt the secret
     let clientSecret;
     try {
-      clientSecret = decrypt(
-        cred.client_secret_encrypted,
-        cred.iv,
-        cred.auth_tag
-      );
-      
+      clientSecret = decrypt(cred.client_secret_encrypted, cred.iv, cred.auth_tag);
       if (!clientSecret) {
         return res.status(500).json({
           success: false,
-          error: "Erreur lors du déchiffrement du secret : résultat vide. Vérifiez que ENCRYPTION_KEY est correctement configurée dans les variables d'environnement."
+          error: "Error decrypting secret: empty result. Verify ENCRYPTION_KEY is correctly set in environment variables."
         });
       }
-      
     } catch (decryptError) {
       return res.status(500).json({
         success: false,
-        error: `Erreur lors du déchiffrement du secret: ${decryptError.message}. Si vous avez changé ENCRYPTION_KEY, vous devrez réenregistrer les credentials.`
+        error: `Error decrypting secret: ${decryptError.message}. If you changed ENCRYPTION_KEY, you will need to re-save credentials.`
       });
     }
-    
-    // Test connection by calling Microsoft Graph directly
     const tokenUrl = `https://login.microsoftonline.com/${cred.tenant_id}/oauth2/v2.0/token`;
     const params = new URLSearchParams({
       client_id: cred.client_id_azure,
@@ -403,26 +284,24 @@ router.get("/:clientId/test", async (req, res) => {
       client_secret: clientSecret,
       grant_type: "client_credentials"
     });
-    
     const fetch = (await import("node-fetch")).default;
     const tokenResponse = await fetch(tokenUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
       body: params.toString()
     });
-    
     if (!tokenResponse.ok) {
-      // Fetch detailed error message from Microsoft
-      let errorMessage = `Erreur d'authentification Microsoft (${tokenResponse.status})`;
+      let errorMessage = `Microsoft authentication error (${tokenResponse.status})`;
       let microsoftError = null;
-      
       try {
         const errorData = await tokenResponse.json();
         microsoftError = errorData;
         if (errorData.error_description) {
           errorMessage = `${errorData.error_description}`;
         } else if (errorData.error) {
-          errorMessage = `Erreur: ${errorData.error}`;
+          errorMessage = `Error: ${errorData.error}`;
           if (errorData.error_description) {
             errorMessage += ` - ${errorData.error_description}`;
           }
@@ -433,39 +312,29 @@ router.get("/:clientId/test", async (req, res) => {
           errorMessage = errorText;
         }
       }
-      
-      // Detailed log for debugging
-      // Help messages based on error code
       if (tokenResponse.status === 401) {
-        let helpMessage = "\n\n🔍 Vérifications à effectuer :";
-        
-        // Specific messages based on Microsoft error type
+        let helpMessage = "\\n\\n🔍 Checks to perform:";
         if (microsoftError?.error === "invalid_client") {
           helpMessage += "\n❌ Client ID ou Client Secret incorrect";
-          helpMessage += "\n   - Vérifiez que le Client ID (Azure) correspond à l'Application (client) ID dans Azure Portal";
-          helpMessage += "\n   - Vérifiez que le Client Secret n'a pas expiré (Azure Portal > Certificates & secrets)";
-          helpMessage += "\n   - Vérifiez que vous avez copié la valeur complète du secret (souvent très long)";
+          helpMessage += "\\n   - Verify the Client ID (Azure) matches the Application (client) ID in Azure Portal";
+          helpMessage += "\\n   - Verify the Client Secret has not expired (Azure Portal > Certificates & secrets)";
+          helpMessage += "\\n   - Verify you copied the full secret value (often very long)";
         } else if (microsoftError?.error === "invalid_request") {
-          helpMessage += "\n❌ Requête invalide";
-          helpMessage += "\n   - Vérifiez que le Tenant ID est correct";
-          helpMessage += "\n   - Vérifiez le format des IDs (GUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)";
+          helpMessage += "\n❌ Invalid request";
+          helpMessage += "\\n   - Verify the Tenant ID is correct";
+          helpMessage += "\\n   - Verify ID format (GUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)";
         } else {
-          helpMessage += "\n- Le Client Secret est-il correct et non expiré ?";
-          helpMessage += "\n- Le Client ID (Azure) est-il correct ?";
-          helpMessage += "\n- Le Tenant ID est-il correct ?";
-          helpMessage += "\n- Les permissions Application sont-elles bien configurées ?";
+          helpMessage += "\\n- Is the Client Secret correct and not expired?";
+          helpMessage += "\n- Is the Client ID (Azure) correct?";
+          helpMessage += "\n- Is the Tenant ID correct?";
+          helpMessage += "\\n- Are Application permissions correctly configured?";
         }
-        
         errorMessage += helpMessage;
       }
-      
       throw new Error(errorMessage);
     }
-    
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
-    
-    // Test with a call to the Graph API
     const graphResponse = await fetch("https://graph.microsoft.com/v1.0/organization", {
       method: "GET",
       headers: {
@@ -473,83 +342,58 @@ router.get("/:clientId/test", async (req, res) => {
         "Content-Type": "application/json"
       }
     });
-    
     if (!graphResponse.ok) {
-      throw new Error(`Erreur Microsoft Graph API: ${graphResponse.status}`);
+      throw new Error(`Microsoft Graph API error: ${graphResponse.status}`);
     }
-    
     const orgInfo = await graphResponse.json();
-    
-    // Also fetch application name
     let applicationDisplayName = null;
     try {
-      const appResponse = await fetch(
-        `https://graph.microsoft.com/v1.0/applications(appId='${cred.client_id_azure}')?$select=displayName`,
-        {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${accessToken}`,
-            "Content-Type": "application/json"
-          }
+      const appResponse = await fetch(`https://graph.microsoft.com/v1.0/applications(appId='${cred.client_id_azure}')?$select=displayName`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
         }
-      );
+      });
       if (appResponse.ok) {
         const appData = await appResponse.json();
         applicationDisplayName = appData.displayName;
       }
-    } catch (e) {
-      // Ignore error if application name cannot be fetched
-    }
-    
+    } catch (e) {}
     res.json({
       success: true,
-      message: "Connexion à Microsoft Graph API réussie",
+      message: "Successfully connected to Microsoft Graph API",
       organization: orgInfo.value?.[0]?.displayName || "Organisation inconnue",
       applicationDisplayName: applicationDisplayName
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message || "Erreur lors du test de connexion"
+      error: error.message || "Error testing connection"
     });
   }
 });
-
-/**
- * GET /api/client-office365/:clientId/secret-expiration
- * Fetches Client Secret expiration date from Microsoft Graph
- */
 router.get("/:clientId/secret-expiration", async (req, res) => {
   try {
-    const { clientId } = req.params;
-    
-    // Fetch credentials
-    const result = await pool.query(
-      `SELECT tenant_id, client_id_azure, secret_key_id
+    const {
+      clientId
+    } = req.params;
+    const result = await pool.query(`SELECT tenant_id, client_id_azure, secret_key_id
        FROM v_b_clients_azure
-       WHERE client_id = $1`,
-      [clientId]
-    );
-    
+       WHERE client_id = $1`, [clientId]);
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: "Aucun credential Office 365 configuré pour ce client"
+        error: "No Office 365 credential configured for this client"
       });
     }
-    
     const cred = result.rows[0];
-    
-    // Import functions from office365.js
     const office365Module = await import("../integrations/office365.js");
     const getClientOffice365Credentials = office365Module.getClientOffice365Credentials;
     const getOffice365Settings = office365Module.getOffice365Settings;
     const getMicrosoftGraphToken = office365Module.getMicrosoftGraphToken;
-    
-    // Fetch credentials to obtain a token
     let clientCredentials = await getClientOffice365Credentials(clientId);
     if (!clientCredentials) {
-      // Try global settings
       const settings = await getOffice365Settings();
       if (settings && settings.tenant_id && settings.client_id && settings.client_secret) {
         clientCredentials = {
@@ -560,75 +404,45 @@ router.get("/:clientId/secret-expiration", async (req, res) => {
       } else {
         return res.status(400).json({
           success: false,
-          error: "Credentials non configurés"
+          error: "Credentials not configured"
         });
       }
     }
-    
-    // Obtain an access token
-    const accessToken = await getMicrosoftGraphToken(
-      clientCredentials.tenantId,
-      clientCredentials.clientId,
-      clientCredentials.clientSecret
-    );
-    
-    // Fetch application information
-    // Use appId as alternate key when object ID is unavailable
+    const accessToken = await getMicrosoftGraphToken(clientCredentials.tenantId, clientCredentials.clientId, clientCredentials.clientSecret);
     const fetch = (await import("node-fetch")).default;
-    
-    // First try with appId as alternate key
-    let appResponse = await fetch(
-      `https://graph.microsoft.com/v1.0/applications(appId='${cred.client_id_azure}')?$select=id,appId,displayName,passwordCredentials`,
-      {
+    let appResponse = await fetch(`https://graph.microsoft.com/v1.0/applications(appId='${cred.client_id_azure}')?$select=id,appId,displayName,passwordCredentials`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      }
+    });
+    if (!appResponse.ok && appResponse.status === 404) {
+      appResponse = await fetch(`https://graph.microsoft.com/v1.0/applications/${cred.client_id_azure}?$select=id,appId,displayName,passwordCredentials`, {
         method: "GET",
         headers: {
           "Authorization": `Bearer ${accessToken}`,
           "Content-Type": "application/json"
         }
-      }
-    );
-    
-    // If that fails, try with the ID directly
-    if (!appResponse.ok && appResponse.status === 404) {
-      appResponse = await fetch(
-        `https://graph.microsoft.com/v1.0/applications/${cred.client_id_azure}?$select=id,appId,displayName,passwordCredentials`,
-        {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${accessToken}`,
-            "Content-Type": "application/json"
-          }
-        }
-      );
+      });
     }
-    
     if (!appResponse.ok) {
       const errorText = await appResponse.text().catch(() => '');
-      
       if (appResponse.status === 403) {
         return res.status(403).json({
           success: false,
-          error: "Permission insuffisante. La permission Application.Read.All est requise pour récupérer la date d'expiration du secret. Vérifiez que le consentement administrateur a été accordé."
+          error: "Insufficient permission. Application.Read.All is required to retrieve the secret expiration date. Verify admin consent was granted."
         });
       }
-      throw new Error(`Erreur Microsoft Graph API: ${appResponse.status} - ${errorText}`);
+      throw new Error(`Microsoft Graph API error: ${appResponse.status} - ${errorText}`);
     }
-    
     const appData = await appResponse.json();
-    
-    // Find matching secret (cannot match by value, but can return all secrets)
-    // The most recent secret is usually the one in use
     const passwordCredentials = appData.passwordCredentials || [];
-    
-    // If a keyId is specified, look up that specific secret
     let targetSecret = null;
     if (cred.secret_key_id) {
       targetSecret = passwordCredentials.find(secret => secret.keyId === cred.secret_key_id);
     }
-    
-    // If no secret found by keyId, take the most recent one
     if (!targetSecret) {
-      // Sort by creation date (startDateTime) descending to get the most recent
       passwordCredentials.sort((a, b) => {
         const dateA = new Date(a.startDateTime || 0);
         const dateB = new Date(b.startDateTime || 0);
@@ -636,17 +450,14 @@ router.get("/:clientId/secret-expiration", async (req, res) => {
       });
       targetSecret = passwordCredentials[0];
     }
-    
     const latestSecret = targetSecret;
-    
     if (!latestSecret) {
       return res.json({
         success: true,
         expirationDate: null,
-        message: "Aucun secret trouvé pour cette application"
+        message: "No secret found for this application"
       });
     }
-    
     res.json({
       success: true,
       expirationDate: latestSecret.endDateTime,
@@ -661,10 +472,8 @@ router.get("/:clientId/secret-expiration", async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message || "Erreur lors de la récupération de la date d'expiration"
+      error: error.message || "Error retrieving expiration date"
     });
   }
 });
-
 export default router;
-

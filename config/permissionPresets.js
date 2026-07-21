@@ -1,15 +1,5 @@
-// ─────────────────────────────────────────────────────────────
-// 🎚️ Standard profile permission presets
-// ─────────────────────────────────────────────────────────────
-// Sensible default rights applied to standard profiles, replacing
-// raw derivation from *_enabled flags (which produced inconsistent
-// results, e.g. a "Read" profile with full CRUD).
-//
-// Gradient: read ⊂ collaborator ⊂ agent ⊂ supervisor ⊂ administrator.
-
 import { PERMISSION_CATALOG, permissionKey } from "./permissionCatalog.js";
 
-/** Builds a Set of keys matching a predicate (group, action) => bool. */
 function keysWhere(predicate) {
   const set = new Set();
   for (const group of PERMISSION_CATALOG) {
@@ -20,31 +10,20 @@ function keysWhere(predicate) {
   return set;
 }
 
-/** All catalog keys (administrator). */
 function allKeys() {
   return keysWhere(() => true);
 }
 
-/** Read-only: view only, excluding admin zones and secrets. */
 function readerKeys() {
-  return keysWhere(
-    (g, a) => !g.adminOnly && a === "view" && g.group !== "vault"
-  );
+  return keysWhere((g, a) => !g.adminOnly && a === "view" && g.group !== "vault");
 }
 
-/** Collaborator: view/create/edit on business modules, no delete or admin. */
 function collaboratorKeys() {
-  const set = keysWhere(
-    (g, a) =>
-      !g.adminOnly &&
-      g.group !== "vault" &&
-      ["view", "create", "edit"].includes(a)
-  );
+  const set = keysWhere((g, a) => !g.adminOnly && g.group !== "vault" && ["view", "create", "edit"].includes(a));
   set.add("vault.view");
   return set;
 }
 
-/** Agent: full CRUD on business modules + contacts/supervision/vault management, no admin. */
 function agentKeys() {
   const set = keysWhere((g, a) => !g.adminOnly && a !== "manage");
   set.add("contacts.manage");
@@ -53,15 +32,22 @@ function agentKeys() {
   return set;
 }
 
-/** Supervisor: everything agent has + ticket administration. */
 function supervisorKeys() {
   const set = agentKeys();
   set.add("tickets.manage");
   return set;
 }
 
-/** Preset builders keyed by normalized profile name. */
+/** Canonical profile name stored in DB / shown in UI. */
+export const SUPER_ADMIN_PROFILE_NAME = "Super Admin";
+
 const PRESET_BUILDERS = {
+  "super admin": allKeys,
+  "super-admin": allKeys,
+  super_admin: allKeys,
+  superadmin: allKeys,
+  superadministrateur: allKeys,
+  "super-administrateur": allKeys,
   administrateur: allKeys,
   administrator: allKeys,
   admin: allKeys,
@@ -73,27 +59,26 @@ const PRESET_BUILDERS = {
   lecture: readerKeys,
   lecteur: readerKeys,
   reader: readerKeys,
+  "read only": readerKeys,
+  readonly: readerKeys
 };
 
-function normalizeName(name) {
-  return String(name || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
+export function normalizeProfileName(name) {
+  return String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-/**
- * Returns the preset permission Set for a standard profile, or null
- * if the profile is not recognized (→ fallback to *_enabled flags).
- */
 export function getPresetForProfile(profileName) {
-  const builder = PRESET_BUILDERS[normalizeName(profileName)];
+  const builder = PRESET_BUILDERS[normalizeProfileName(profileName)];
   return builder ? builder() : null;
 }
 
-/** True if the profile matches an admin preset (full access). */
+/** Only Super Admin is immutable (permissions / profile meta). Administrator remains editable. */
+export function isSuperAdminPresetProfile(profileName) {
+  const key = normalizeProfileName(profileName);
+  return key === "super admin" || key === "superadmin" || key === "super administrateur";
+}
+
+/** @deprecated Use isSuperAdminPresetProfile — kept for call sites that locked "admin" before. */
 export function isAdminPresetProfile(profileName) {
-  const key = normalizeName(profileName);
-  return key === "administrateur" || key === "administrator" || key === "admin";
+  return isSuperAdminPresetProfile(profileName);
 }

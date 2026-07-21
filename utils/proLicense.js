@@ -1,14 +1,7 @@
 import fetch from "node-fetch";
-import {
-  VERITAS_BILLING_API_URL,
-  VERITAS_BILLING_LICENSE_SECRET,
-} from "../constants/billing.js";
-
+import { VERITAS_BILLING_API_URL, VERITAS_BILLING_LICENSE_SECRET } from "../constants/billing.js";
 const LICENSE_KEY_RE = /^VRT-PRO-(?:[A-F0-9]{4}-){3}[A-F0-9]{4}$/;
-
 const DEFAULT_CACHE_MS = 5000;
-
-/** @type {{ valid: boolean, status: string|null, agentCount: number|null, billingInterval: string|null, checkedAt: string|null, checkedAtMs: number, lastError: string|null, billingConfigured: boolean, customerEmail: string|null, licenseRevision: string|null }} */
 let cache = {
   valid: false,
   status: null,
@@ -19,68 +12,52 @@ let cache = {
   lastError: null,
   billingConfigured: false,
   customerEmail: null,
-  licenseRevision: null,
+  licenseRevision: null
 };
-
 let refreshInFlight = null;
-
 export function normalizeLicenseKey(raw) {
   if (typeof raw !== "string") return "";
   return raw.trim().toUpperCase().replace(/\s+/g, "");
 }
-
 export function isValidLicenseKeyFormat(key) {
   return LICENSE_KEY_RE.test(normalizeLicenseKey(key));
 }
-
 export function getLicenseCacheMaxAgeMs() {
   const raw = Number.parseInt(process.env.LICENSE_CACHE_MS || "", 10);
   return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_CACHE_MS;
 }
-
-/** Local dev: VERITAS_EDITION=pro without license key or billing. */
 export function isDevProBypass() {
-  return (
-    process.env.NODE_ENV !== "production" &&
-    String(process.env.VERITAS_EDITION || "").trim().toLowerCase() === "pro" &&
-    !normalizeLicenseKey(process.env.VERITAS_LICENSE_KEY || "")
-  );
+  return process.env.NODE_ENV !== "production" && String(process.env.VERITAS_EDITION || "").trim().toLowerCase() === "pro" && !normalizeLicenseKey(process.env.VERITAS_LICENSE_KEY || "");
 }
-
 export function isLicenseCacheValid() {
   if (isDevProBypass()) return true;
   return cache.valid === true;
 }
-
 export function getLicensedMspAgentLimit() {
   if (isDevProBypass()) return null;
   if (!isLicenseCacheValid()) return null;
   if (cache.agentCount == null) return null;
   return cache.agentCount;
 }
-
 function getBillingConfig() {
   return {
     billingUrl: VERITAS_BILLING_API_URL,
     secret: VERITAS_BILLING_LICENSE_SECRET,
-    configured: true,
+    configured: true
   };
 }
-
 function formatBillingFetchError(error, billingUrl) {
   const cause = error?.cause?.code || error?.code || "";
   if (cause === "ECONNREFUSED" || cause === "ENOTFOUND") {
-    return `Service de validation licence injoignable (${billingUrl}). Vérifiez la connectivité réseau.`;
+    return `License validation service unreachable (${billingUrl}). Check network connectivity.`;
   }
   if (String(error?.message || "").includes("fetch failed")) {
-    return `Impossible de joindre le service de validation licence (${billingUrl}).`;
+    return `Unable to reach the license validation service (${billingUrl}).`;
   }
-  return error?.message || "Erreur réseau vers le service de validation licence.";
+  return error?.message || "Network error while contacting the license validation service.";
 }
-
 export async function refreshProLicenseState() {
   cache.billingConfigured = getBillingConfig().configured;
-
   if (isDevProBypass()) {
     cache = {
       ...cache,
@@ -92,11 +69,10 @@ export async function refreshProLicenseState() {
       checkedAtMs: Date.now(),
       lastError: null,
       customerEmail: null,
-      licenseRevision: null,
+      licenseRevision: null
     };
     return cache;
   }
-
   const key = normalizeLicenseKey(process.env.VERITAS_LICENSE_KEY || "");
   if (!key) {
     cache = {
@@ -109,25 +85,26 @@ export async function refreshProLicenseState() {
       checkedAtMs: Date.now(),
       lastError: null,
       customerEmail: null,
-      licenseRevision: null,
+      licenseRevision: null
     };
     return cache;
   }
-
-  const { billingUrl, secret } = getBillingConfig();
-
+  const {
+    billingUrl,
+    secret
+  } = getBillingConfig();
   try {
     const res = await fetch(`${billingUrl}/api/license/validate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Veritas-License-Secret": secret,
+        "X-Veritas-License-Secret": secret
       },
-      body: JSON.stringify({ licenseKey: key }),
+      body: JSON.stringify({
+        licenseKey: key
+      })
     });
-
     const data = await res.json().catch(() => ({}));
-
     if (!res.ok) {
       cache = {
         ...cache,
@@ -137,13 +114,12 @@ export async function refreshProLicenseState() {
         billingInterval: null,
         checkedAt: new Date().toISOString(),
         checkedAtMs: Date.now(),
-        lastError: data.message || `Erreur billing HTTP ${res.status}`,
+        lastError: data.message || `Billing HTTP error ${res.status}`,
         customerEmail: null,
-        licenseRevision: data.licenseRevision || data.updatedAt || null,
+        licenseRevision: data.licenseRevision || data.updatedAt || null
       };
       return cache;
     }
-
     cache = {
       ...cache,
       valid: Boolean(data.valid),
@@ -152,9 +128,9 @@ export async function refreshProLicenseState() {
       billingInterval: data.billingInterval ?? null,
       checkedAt: new Date().toISOString(),
       checkedAtMs: Date.now(),
-      lastError: data.valid ? null : data.message || "Licence invalide ou abonnement inactif.",
+      lastError: data.valid ? null : data.message || "Invalid license or inactive subscription.",
       customerEmail: data.customerEmail ?? null,
-      licenseRevision: data.licenseRevision || data.updatedAt || null,
+      licenseRevision: data.licenseRevision || data.updatedAt || null
     };
     return cache;
   } catch (error) {
@@ -168,16 +144,13 @@ export async function refreshProLicenseState() {
       checkedAtMs: Date.now(),
       lastError: formatBillingFetchError(error, billingUrl),
       customerEmail: null,
-      licenseRevision: null,
+      licenseRevision: null
     };
     return cache;
   }
 }
-
-/** Refreshes the license if the cache is stale (near-instant revocation). */
 export async function ensureFreshLicense() {
   if (isDevProBypass()) return cache;
-
   const maxAge = getLicenseCacheMaxAgeMs();
   if (maxAge === 0 || Date.now() - (cache.checkedAtMs || 0) >= maxAge) {
     if (!refreshInFlight) {
@@ -189,11 +162,9 @@ export async function ensureFreshLicense() {
   }
   return cache;
 }
-
 export function invalidateLicenseCache() {
   cache.checkedAtMs = 0;
 }
-
 export function getLicenseKeyHint() {
   const key = normalizeLicenseKey(process.env.VERITAS_LICENSE_KEY || "");
   if (!key) return null;
@@ -201,8 +172,9 @@ export function getLicenseKeyHint() {
   const tail = parts.slice(-2).join("-");
   return `••••-${tail}`;
 }
-
-function buildLicenseDetail({ includePrivate = false } = {}) {
+function buildLicenseDetail({
+  includePrivate = false
+} = {}) {
   const detail = {
     valid: cache.valid || isDevProBypass(),
     status: isDevProBypass() ? "dev_bypass" : cache.status,
@@ -211,30 +183,30 @@ function buildLicenseDetail({ includePrivate = false } = {}) {
     checkedAt: cache.checkedAt,
     lastError: cache.lastError,
     billingConfigured: cache.billingConfigured,
-    devBypass: isDevProBypass(),
+    devBypass: isDevProBypass()
   };
   if (includePrivate) {
     detail.customerEmail = cache.customerEmail;
   }
   return detail;
 }
-
-/** License summary without PII — exposed via GET /api/edition (public). */
 export function getLicensePublicSummary() {
   return {
     edition: isLicenseCacheValid() ? "pro" : "community",
     hasLicenseKey: Boolean(normalizeLicenseKey(process.env.VERITAS_LICENSE_KEY || "")),
     keyHint: getLicenseKeyHint(),
-    license: buildLicenseDetail({ includePrivate: false }),
+    license: buildLicenseDetail({
+      includePrivate: false
+    })
   };
 }
-
-/** Summary complete for admins (GET /api/license). */
 export function getLicenseAdminSummary() {
   return {
     edition: isLicenseCacheValid() ? "pro" : "community",
     hasLicenseKey: Boolean(normalizeLicenseKey(process.env.VERITAS_LICENSE_KEY || "")),
     keyHint: getLicenseKeyHint(),
-    license: buildLicenseDetail({ includePrivate: true }),
+    license: buildLicenseDetail({
+      includePrivate: true
+    })
   };
 }

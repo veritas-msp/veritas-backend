@@ -10,11 +10,10 @@ import { ensureMailCollectSettingsSchema } from "./ensureMailCollectSettingsSche
 import { ensureIntegrationTenantsSchema } from "./ensureIntegrationTenantsSchema.js";
 import { ensureClientVaultSecretsSchema } from "./ensureClientVaultSecretsSchema.js";
 import { ensureTicketMajorIncidentSchema } from "./ensureTicketMajorIncidentSchema.js";
+import { ensureTicketActivitySchema } from "./ensureTicketActivitySchema.js";
 import { ensureMonitoringAutomationSchema } from "./ensureMonitoringAutomationSchema.js";
 import { ensurePermissionsSchema } from "./ensurePermissionsSchema.js";
 import { runIncrementalAvrilMigrations } from "../utils/incrementalAvrilMigrations.js";
-
-/** Incremental migrations (Avril/) — after full installation only. */
 export async function runPostSetupSchemaMigrations() {
   await ensureProfilesSchema();
   await ensurePermissionsSchema();
@@ -29,10 +28,14 @@ export async function runPostSetupSchemaMigrations() {
   await ensureIntegrationTenantsSchema();
   await ensureClientVaultSecretsSchema();
   await ensureTicketMajorIncidentSchema();
+  await ensureTicketActivitySchema();
   await ensureMonitoringAutomationSchema();
   try {
     await runIncrementalAvrilMigrations();
   } catch (err) {
     console.error("[post-setup] Incremental migrations failed:", err.message);
   }
+  // Re-run after incremental patches (documents_enabled, Super Admin SQL, etc.)
+  await ensureProfilesSchema();
+  await ensurePermissionsSchema();
 }

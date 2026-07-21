@@ -1,121 +1,121 @@
 import express from "express";
 import verifyJWT from "../../middleware/auth.js";
 import { pool } from "../../database/db.js";
-import {
-  areMonitoringAlertsEnabled,
-  clearEquipmentAlertSuspension,
-  getEquipmentAlertSettings,
-  isAlertSuspensionActive,
-  resolveEquipmentFamilyKey,
-  setEquipmentAlertsEnabled,
-  upsertEquipmentAlertSuspension,
-} from "../../utils/equipmentMonitoringAlerts.js";
+import { areMonitoringAlertsEnabled, clearEquipmentAlertSuspension, getEquipmentAlertSettings, isAlertSuspensionActive, resolveEquipmentFamilyKey, setEquipmentAlertsEnabled, upsertEquipmentAlertSuspension } from "../../utils/equipmentMonitoringAlerts.js";
 import { enableMonitoringAlertsForClient, isEquipmentMonitoredInDb } from "../../utils/equipmentInventoryScan.js";
-import {
-  clearClientMonitoringAlertSuspension,
-  getClientMonitoringAlertPolicy,
-  setClientMonitoringAlertSuspension,
-} from "../../utils/clientMonitoringAlerts.js";
+import { clearClientMonitoringAlertSuspension, getClientMonitoringAlertPolicy, setClientMonitoringAlertSuspension } from "../../utils/clientMonitoringAlerts.js";
 import { requireAnyPermission } from "../../middleware/permissions.js";
-
 const router = express.Router();
-
 function parseDurationMinutes(value) {
   const n = Number.parseInt(String(value), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
-
 router.get("/client-policy/:clientId", verifyJWT, async (req, res) => {
   try {
     const clientId = Number(req.params.clientId);
-    if (!clientId) return res.status(400).json({ error: "clientId requis" });
+    if (!clientId) return res.status(400).json({
+      error: "clientId required"
+    });
     const policy = await getClientMonitoringAlertPolicy(clientId);
-    if (!policy) return res.status(404).json({ error: "Client introuvable" });
-    res.json({ policy, suspended: Boolean(policy.suspended) });
+    if (!policy) return res.status(404).json({
+      error: "Client not found"
+    });
+    res.json({
+      policy,
+      suspended: Boolean(policy.suspended)
+    });
   } catch (err) {
     console.error("[equipment-monitoring-alerts] GET client-policy:", err.message);
-    res.status(500).json({ error: "Erreur serveur" });
+    res.status(500).json({
+      error: "Server error"
+    });
   }
 });
-
-router.put(
-  "/client-policy/:clientId",
-  verifyJWT,
-  requireAnyPermission("supervision.manage", "clients.edit"),
-  async (req, res) => {
-    try {
-      const clientId = Number(req.params.clientId);
-      if (!clientId) return res.status(400).json({ error: "clientId requis" });
-
-      const { suspensionType, suspendedUntil, durationMinutes, reason } = req.body || {};
-
-      if (suspensionType === "none" || suspensionType === null || suspensionType === "" || suspensionType === "active") {
-        const policy = await clearClientMonitoringAlertSuspension(clientId);
-        if (!policy) return res.status(404).json({ error: "Client introuvable" });
-        return res.json({ policy, suspended: false });
-      }
-
-      if (suspensionType !== "temporary" && suspensionType !== "permanent") {
-        return res.status(400).json({ error: "suspensionType invalide (temporary|permanent|none)" });
-      }
-
-      let untilIso = suspendedUntil || null;
-      if (suspensionType === "temporary" && !untilIso) {
-        const minutes = parseDurationMinutes(durationMinutes) || 1440;
-        untilIso = new Date(Date.now() + minutes * 60 * 1000).toISOString();
-      }
-
-      const policy = await setClientMonitoringAlertSuspension({
-        clientId,
-        suspensionType,
-        suspendedUntil: suspensionType === "temporary" ? untilIso : null,
-        suspendedBy: req.user?.id || null,
-        suspensionReason: reason || null,
-      });
-      if (!policy) return res.status(404).json({ error: "Client introuvable" });
-      res.json({ policy, suspended: Boolean(policy.suspended) });
-    } catch (err) {
-      console.error("[equipment-monitoring-alerts] PUT client-policy:", err.message);
-      res.status(500).json({ error: "Erreur serveur" });
-    }
-  }
-);
-
-router.post(
-  "/by-client/:clientId/enable-all",
-  verifyJWT,
-  requireAnyPermission("supervision.manage", "clients.edit"),
-  async (req, res) => {
+router.put("/client-policy/:clientId", verifyJWT, requireAnyPermission("supervision.manage", "clients.edit"), async (req, res) => {
   try {
     const clientId = Number(req.params.clientId);
-    if (!clientId) return res.status(400).json({ error: "clientId requis" });
-
+    if (!clientId) return res.status(400).json({
+      error: "clientId required"
+    });
+    const {
+      suspensionType,
+      suspendedUntil,
+      durationMinutes,
+      reason
+    } = req.body || {};
+    if (suspensionType === "none" || suspensionType === null || suspensionType === "" || suspensionType === "active") {
+      const policy = await clearClientMonitoringAlertSuspension(clientId);
+      if (!policy) return res.status(404).json({
+        error: "Client not found"
+      });
+      return res.json({
+        policy,
+        suspended: false
+      });
+    }
+    if (suspensionType !== "temporary" && suspensionType !== "permanent") {
+      return res.status(400).json({
+        error: "Invalid suspensionType (temporary|permanent|none)"
+      });
+    }
+    let untilIso = suspendedUntil || null;
+    if (suspensionType === "temporary" && !untilIso) {
+      const minutes = parseDurationMinutes(durationMinutes) || 1440;
+      untilIso = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+    }
+    const policy = await setClientMonitoringAlertSuspension({
+      clientId,
+      suspensionType,
+      suspendedUntil: suspensionType === "temporary" ? untilIso : null,
+      suspendedBy: req.user?.id || null,
+      suspensionReason: reason || null
+    });
+    if (!policy) return res.status(404).json({
+      error: "Client not found"
+    });
+    res.json({
+      policy,
+      suspended: Boolean(policy.suspended)
+    });
+  } catch (err) {
+    console.error("[equipment-monitoring-alerts] PUT client-policy:", err.message);
+    res.status(500).json({
+      error: "Server error"
+    });
+  }
+});
+router.post("/by-client/:clientId/enable-all", verifyJWT, requireAnyPermission("supervision.manage", "clients.edit"), async (req, res) => {
+  try {
+    const clientId = Number(req.params.clientId);
+    if (!clientId) return res.status(400).json({
+      error: "clientId required"
+    });
     const families = Array.isArray(req.body?.families) ? req.body.families : null;
-    const result = await enableMonitoringAlertsForClient(clientId, { equipmentFamilies: families });
+    const result = await enableMonitoringAlertsForClient(clientId, {
+      equipmentFamilies: families
+    });
     res.json(result);
   } catch (err) {
     console.error("[equipment-monitoring-alerts] enable-all:", err.message);
-    res.status(500).json({ error: "Erreur serveur" });
+    res.status(500).json({
+      error: "Server error"
+    });
   }
 });
-
 router.get("/by-client/:clientId", verifyJWT, async (req, res) => {
   try {
     const clientId = Number(req.params.clientId);
-    if (!clientId) return res.status(400).json({ error: "clientId requis" });
-
-    const result = await pool.query(
-      `SELECT * FROM v_b_equipment_monitoring_alerts WHERE client_id = $1`,
-      [clientId]
-    );
-
+    if (!clientId) return res.status(400).json({
+      error: "clientId required"
+    });
+    const result = await pool.query(`SELECT * FROM v_b_equipment_monitoring_alerts WHERE client_id = $1`, [clientId]);
     const map = {};
     for (const row of result.rows) {
       const key = `${row.equipment_id}:${row.equipment_family}`;
       const settings = {
         alertsEnabled: Boolean(row.alerts_enabled),
         suspensionType: row.suspension_type,
-        suspendedUntil: row.suspended_until,
+        suspendedUntil: row.suspended_until
       };
       map[key] = {
         alertsEnabled: settings.alertsEnabled,
@@ -123,45 +123,47 @@ router.get("/by-client/:clientId", verifyJWT, async (req, res) => {
         blocked: !areMonitoringAlertsEnabled({
           alertsEnabled: settings.alertsEnabled,
           suspensionType: settings.suspensionType,
-          suspendedUntil: settings.suspendedUntil,
+          suspendedUntil: settings.suspendedUntil
         }),
         suspensionType: row.suspension_type,
         suspendedUntil: row.suspended_until,
         lastKnownStatus: row.last_known_status,
-        lastTicketId: row.last_ticket_id,
+        lastTicketId: row.last_ticket_id
       };
     }
-    res.json({ alerts: map });
+    res.json({
+      alerts: map
+    });
   } catch (err) {
     console.error("[equipment-monitoring-alerts] GET by-client:", err.message);
-    res.status(500).json({ error: "Erreur serveur" });
+    res.status(500).json({
+      error: "Server error"
+    });
   }
 });
-
 router.get("/:clientId/:equipmentId", verifyJWT, async (req, res) => {
   try {
     const clientId = Number(req.params.clientId);
     const equipmentId = String(req.params.equipmentId || "").trim();
-    const family =
-      resolveEquipmentFamilyKey(req.query.family || req.query.type) ||
-      String(req.query.family || "").trim();
-
+    const family = resolveEquipmentFamilyKey(req.query.family || req.query.type) || String(req.query.family || "").trim();
     if (!clientId || !equipmentId || !family) {
-      return res.status(400).json({ error: "clientId, equipmentId et family requis" });
+      return res.status(400).json({
+        error: "clientId, equipmentId et family required"
+      });
     }
-
     const settings = await getEquipmentAlertSettings(clientId, equipmentId, family);
     res.json({
       settings: settings || null,
       suspended: isAlertSuspensionActive(settings),
-      alertsEnabled: Boolean(settings?.alertsEnabled),
+      alertsEnabled: Boolean(settings?.alertsEnabled)
     });
   } catch (err) {
     console.error("[equipment-monitoring-alerts] GET:", err.message);
-    res.status(500).json({ error: "Erreur serveur" });
+    res.status(500).json({
+      error: "Server error"
+    });
   }
 });
-
 router.put("/:clientId/:equipmentId", verifyJWT, async (req, res) => {
   try {
     const clientId = Number(req.params.clientId);
@@ -174,36 +176,29 @@ router.put("/:clientId/:equipmentId", verifyJWT, async (req, res) => {
       suspendedUntil,
       durationMinutes,
       reason,
-      alertsEnabled,
+      alertsEnabled
     } = req.body || {};
-
     const equipmentFamily = resolveEquipmentFamilyKey(family || type);
     if (!clientId || !equipmentId || !equipmentFamily) {
-      return res.status(400).json({ error: "clientId, equipmentId et family requis" });
+      return res.status(400).json({
+        error: "clientId, equipmentId et family required"
+      });
     }
-
-    const wantsEnable =
-      alertsEnabled === true ||
-      suspensionType === "temporary" ||
-      suspensionType === "permanent";
-
+    const wantsEnable = alertsEnabled === true || suspensionType === "temporary" || suspensionType === "permanent";
     if (wantsEnable) {
       const monitored = await isEquipmentMonitoredInDb(clientId, equipmentId, equipmentFamily);
       if (!monitored) {
         return res.status(400).json({
-          error:
-            "Cet équipement n'est pas surveillé (agent RMM ou mapping CheckMK requis pour configurer les alertes).",
-          code: "NOT_MONITORED",
+          error: "This equipment is not monitored (RMM agent or CheckMK mapping required to configure alerts).",
+          code: "NOT_MONITORED"
         });
       }
     }
-
     let untilIso = suspendedUntil || null;
     if (suspensionType === "temporary" && !untilIso) {
       const minutes = parseDurationMinutes(durationMinutes) || 60;
       untilIso = new Date(Date.now() + minutes * 60 * 1000).toISOString();
     }
-
     if (suspensionType === "none" || suspensionType === null || suspensionType === "") {
       await clearEquipmentAlertSuspension(clientId, equipmentId, equipmentFamily);
       const settings = await setEquipmentAlertsEnabled({
@@ -211,19 +206,19 @@ router.put("/:clientId/:equipmentId", verifyJWT, async (req, res) => {
         equipmentId,
         equipmentFamily,
         equipmentName,
-        alertsEnabled: alertsEnabled === true,
+        alertsEnabled: alertsEnabled === true
       });
       return res.json({
         settings,
         suspended: false,
-        alertsEnabled: Boolean(settings?.alertsEnabled),
+        alertsEnabled: Boolean(settings?.alertsEnabled)
       });
     }
-
     if (suspensionType !== "temporary" && suspensionType !== "permanent") {
-      return res.status(400).json({ error: "suspensionType invalide (temporary|permanent|none)" });
+      return res.status(400).json({
+        error: "Invalid suspensionType (temporary|permanent|none)"
+      });
     }
-
     const settings = await upsertEquipmentAlertSuspension({
       clientId,
       equipmentId,
@@ -232,18 +227,18 @@ router.put("/:clientId/:equipmentId", verifyJWT, async (req, res) => {
       suspensionType,
       suspendedUntil: suspensionType === "temporary" ? untilIso : null,
       suspendedBy: req.user?.id || null,
-      suspensionReason: reason || null,
+      suspensionReason: reason || null
     });
-
     res.json({
       settings,
       suspended: isAlertSuspensionActive(settings),
-      alertsEnabled: Boolean(settings?.alertsEnabled),
+      alertsEnabled: Boolean(settings?.alertsEnabled)
     });
   } catch (err) {
     console.error("[equipment-monitoring-alerts] PUT:", err.message);
-    res.status(500).json({ error: "Erreur serveur" });
+    res.status(500).json({
+      error: "Server error"
+    });
   }
 });
-
 export default router;

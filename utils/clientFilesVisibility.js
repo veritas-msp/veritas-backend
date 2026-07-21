@@ -1,26 +1,22 @@
 import { pool } from "../database/db.js";
-
 let visibleToClientColumnCache = null;
-
 export async function hasVisibleToClientColumn() {
   if (visibleToClientColumnCache !== null) return visibleToClientColumnCache;
   try {
-    const { rows } = await pool.query(
-      `SELECT 1
+    const {
+      rows
+    } = await pool.query(`SELECT 1
        FROM information_schema.columns
        WHERE table_schema = 'public'
          AND table_name = 'v_b_client_files'
          AND column_name = 'visible_to_client'
-       LIMIT 1`
-    );
+       LIMIT 1`);
     visibleToClientColumnCache = rows.length > 0;
   } catch {
     visibleToClientColumnCache = false;
   }
   return visibleToClientColumnCache;
 }
-
-/** Applies visible_to_client migration if needed (client portal vault). */
 export async function ensureVisibleToClientColumn() {
   if (await hasVisibleToClientColumn()) return true;
   try {
@@ -30,7 +26,7 @@ export async function ensureVisibleToClientColumn() {
     `);
     await pool.query(`
       COMMENT ON COLUMN v_b_client_files.visible_to_client IS
-        'Si true, le document est visible et téléchargeable depuis le portail client (coffre-fort).'
+        'If true, the document is visible and downloadable from the client portal (vault).'
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_v_b_client_files_portal_visible
@@ -44,15 +40,11 @@ export async function ensureVisibleToClientColumn() {
     return false;
   }
 }
-
 export function parseVisibleToClient(value) {
   if (value === true || value === "true" || value === "1" || value === 1) return true;
   if (value === false || value === "false" || value === "0" || value === 0) return false;
   return false;
 }
-
 export function visibilitySelectSql(hasVisibility = null) {
-  return hasVisibility === false
-    ? "FALSE AS visible_to_client"
-    : "visible_to_client";
+  return hasVisibility === false ? "FALSE AS visible_to_client" : "visible_to_client";
 }

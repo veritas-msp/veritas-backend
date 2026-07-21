@@ -1,5 +1,4 @@
 const ALLOWED_SEXE = new Set(["monsieur", "madame"]);
-
 export function normalizeContactSexe(value) {
   if (value === null || value === undefined) return null;
   const raw = String(value).toLowerCase().trim();

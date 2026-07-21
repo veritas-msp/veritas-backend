@@ -3,32 +3,21 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { pool } from "../database/db.js";
 import { canRunAutoSchemaMigrations } from "../utils/setupState.js";
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const MIGRATION_FILE = "schema/patches/20260721_user_notifications.sql";
 const ARCHIVE_MIGRATION_FILE = "schema/patches/20260623_user_notifications_archive.sql";
-
 let ensured = false;
-
 async function tableExists(client, tableName) {
-  const result = await client.query(
-    `SELECT 1 FROM information_schema.tables
-     WHERE table_schema = 'public' AND table_name = $1 LIMIT 1`,
-    [tableName]
-  );
+  const result = await client.query(`SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = $1 LIMIT 1`, [tableName]);
   return result.rows.length > 0;
 }
-
 async function columnExists(client, tableName, columnName) {
-  const result = await client.query(
-    `SELECT 1 FROM information_schema.columns
-     WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2 LIMIT 1`,
-    [tableName, columnName]
-  );
+  const result = await client.query(`SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2 LIMIT 1`, [tableName, columnName]);
   return result.rows.length > 0;
 }
-
 async function applyMigrationFile(client, relativePath) {
   const filePath = path.join(root, relativePath);
   if (!fs.existsSync(filePath)) {
@@ -38,25 +27,21 @@ async function applyMigrationFile(client, relativePath) {
   await client.query(fs.readFileSync(filePath, "utf8"));
   return true;
 }
-
 export async function ensureUserNotificationsSchema() {
   if (ensured) return;
   if (!(await canRunAutoSchemaMigrations())) return;
-
   const client = await pool.connect();
   try {
     const hasTable = await tableExists(client, "v_b_user_notifications");
     if (!hasTable) {
       await applyMigrationFile(client, MIGRATION_FILE);
     }
-
     if (hasTable || (await tableExists(client, "v_b_user_notifications"))) {
       const hasArchiveColumn = await columnExists(client, "v_b_user_notifications", "archived_at");
       if (!hasArchiveColumn) {
         await applyMigrationFile(client, ARCHIVE_MIGRATION_FILE);
       }
     }
-
     ensured = true;
   } catch (err) {
     console.error("[user-notifications] Migration failed:", err?.message || err);

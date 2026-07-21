@@ -1,8 +1,5 @@
 import { pool } from "../database/db.js";
-
-/** Estimated average row size (data + indexes), in bytes. */
 export const RMM_METRICS_BYTES_PER_ROW = 72;
-
 export function countMetricSeriesPerAgentDay(collectors = {}, avgDisksPerAgent = 3) {
   let count = 0;
   if (collectors.hardware !== false) {
@@ -13,16 +10,11 @@ export function countMetricSeriesPerAgentDay(collectors = {}, avgDisksPerAgent =
   if (collectors.sensors !== false) count += 1;
   return count;
 }
-
-/**
- * Estimates steady-state storage volume (daily aggregation).
- * Sampling frequency does not increase row count — it refines the day's min/max.
- */
 export function estimateRmmMetricsStorage({
   agentCount = 0,
   retentionDays = 730,
   collectors = {},
-  avgDisksPerAgent = 3,
+  avgDisksPerAgent = 3
 } = {}) {
   const safeAgents = Math.max(0, Math.round(Number(agentCount) || 0));
   const safeRetention = Math.max(1, Math.min(3650, Math.round(Number(retentionDays) || 730)));
@@ -30,7 +22,6 @@ export function estimateRmmMetricsStorage({
   const steadyStateRows = safeAgents * rowsPerAgentDay * safeRetention;
   const tableBytes = steadyStateRows * RMM_METRICS_BYTES_PER_ROW;
   const estimatedBytes = Math.round(tableBytes * 1.35);
-
   return {
     agentCount: safeAgents,
     retentionDays: safeRetention,
@@ -38,26 +29,22 @@ export function estimateRmmMetricsStorage({
     rowsPerAgentDay,
     steadyStateRows,
     estimatedBytes,
-    samplesPerDayHint: null,
+    samplesPerDayHint: null
   };
 }
-
 export async function fetchRmmMetricsStorageStats(client = pool) {
-  const [statsResult, agentsResult, disksResult] = await Promise.all([
-    client.query(`
+  const [statsResult, agentsResult, disksResult] = await Promise.all([client.query(`
       SELECT
         COUNT(*)::bigint AS row_count,
         COUNT(DISTINCT agent_id)::int AS agent_count,
         MIN(day_date) AS oldest_day,
         MAX(day_date) AS newest_day
       FROM v_b_rmm_metric_daily
-    `),
-    client.query(`
+    `), client.query(`
       SELECT COUNT(*)::int AS active_agents
       FROM v_b_rmm_agents
       WHERE status = 'active'
-    `),
-    client.query(`
+    `), client.query(`
       SELECT COALESCE(AVG(disk_dims), 3)::numeric(4,1) AS avg_disks_per_agent
       FROM (
         SELECT agent_id, COUNT(DISTINCT dim_id) AS disk_dims
@@ -65,9 +52,7 @@ export async function fetchRmmMetricsStorageStats(client = pool) {
         WHERE metric_id = 1 AND dim_id > 0 AND day_date >= CURRENT_DATE - 30
         GROUP BY agent_id
       ) t
-    `),
-  ]);
-
+    `)]);
   let totalBytes = 0;
   let tableBytes = 0;
   let indexesBytes = 0;
@@ -87,7 +72,6 @@ export async function fetchRmmMetricsStorageStats(client = pool) {
     tableBytes = Math.round(rowCount * RMM_METRICS_BYTES_PER_ROW);
     indexesBytes = totalBytes - tableBytes;
   }
-
   const row = statsResult.rows[0] || {};
   return {
     rowCount: Number(row.row_count || 0),
@@ -98,6 +82,6 @@ export async function fetchRmmMetricsStorageStats(client = pool) {
     newestDay: row.newest_day || null,
     totalBytes,
     tableBytes,
-    indexesBytes,
+    indexesBytes
   };
 }

@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import { pool } from '../../database/db.js';
 import verifyJWT from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/roles.js';
@@ -9,22 +9,18 @@ import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import multer from 'multer';
-
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const router = express.Router();
-
 const DEFAULT_MAINTENANCE_STATUS = {
   enabled: false,
   maintenanceMode: false,
-  message: "L'application est actuellement en maintenance. Veuillez réessayer plus tard.",
+  message: "The application is currently under maintenance. Please try again later.",
   tickerSpeed: 22,
   tickerDirection: "left",
-  tickerColor: "#d97706",
+  tickerColor: "#d97706"
 };
-
 async function hasSystemTable() {
   if (!process.env.DATABASE_URL) return false;
   try {
@@ -34,29 +30,23 @@ async function hasSystemTable() {
     return false;
   }
 }
-
 async function hasSystemColumn(columnName) {
   const cols = await getSystemColumns();
   return cols.has(columnName);
 }
-
 async function getSystemColumns() {
-  const result = await pool.query(
-    `SELECT a.attname AS column_name
+  const result = await pool.query(`SELECT a.attname AS column_name
      FROM pg_attribute a
      WHERE a.attrelid = to_regclass('v_b_settings_system')
        AND a.attnum > 0
-       AND NOT a.attisdropped`
-  );
-  return new Set(result.rows.map((row) => row.column_name));
+       AND NOT a.attisdropped`);
+  return new Set(result.rows.map(row => row.column_name));
 }
-
 function resolveMaintenanceMessageColumn(systemColumns) {
   if (systemColumns.has('maintenance_message')) return 'maintenance_message';
   if (systemColumns.has('maitnenance_message')) return 'maitnenance_message';
   return null;
 }
-
 function buildPgEnv(dbParams) {
   return {
     ...process.env,
@@ -64,56 +54,43 @@ function buildPgEnv(dbParams) {
     PGUSER: dbParams.user,
     PGHOST: dbParams.host,
     PGPORT: String(dbParams.port),
-    PGDATABASE: dbParams.database,
+    PGDATABASE: dbParams.database
   };
 }
-
 async function assertPgTool(command) {
-  await execFileAsync(command, ['--version'], { windowsHide: true });
+  await execFileAsync(command, ['--version'], {
+    windowsHide: true
+  });
 }
-
 async function runPgTool(command, args, dbParams, options = {}) {
-  const { maxBuffer = 10 * 1024 * 1024 } = options;
+  const {
+    maxBuffer = 10 * 1024 * 1024
+  } = options;
   return execFileAsync(command, args, {
     env: buildPgEnv(dbParams),
     maxBuffer,
-    windowsHide: true,
+    windowsHide: true
   });
 }
-
 async function upsertLegacyEncryptedSetting(key, plainValue) {
   const encrypted = encryptSettingValue(plainValue);
-
-  const updated = await pool.query(
-    `UPDATE v_b_settings_system
+  const updated = await pool.query(`UPDATE v_b_settings_system
      SET value_encrypted = $1, value_iv = $2, value_auth_tag = $3
-     WHERE key = $4`,
-    [encrypted.value_encrypted, encrypted.value_iv, encrypted.value_auth_tag, key]
-  );
-
+     WHERE key = $4`, [encrypted.value_encrypted, encrypted.value_iv, encrypted.value_auth_tag, key]);
   if (updated.rowCount === 0) {
-    await pool.query(
-      `INSERT INTO v_b_settings_system (key, value_encrypted, value_iv, value_auth_tag)
-       VALUES ($1, $2, $3, $4)`,
-      [key, encrypted.value_encrypted, encrypted.value_iv, encrypted.value_auth_tag]
-    );
+    await pool.query(`INSERT INTO v_b_settings_system (key, value_encrypted, value_iv, value_auth_tag)
+       VALUES ($1, $2, $3, $4)`, [key, encrypted.value_encrypted, encrypted.value_iv, encrypted.value_auth_tag]);
   }
 }
-
-// ───────────────────────────────────────────────
-// 📤 Multer configuration for backup uploads
-// ───────────────────────────────────────────────
 const backupsDir = path.join(__dirname, '../backups');
-
-// Create backups folder if it does not exist
-fs.mkdir(backupsDir, { recursive: true }).catch(() => {});
-
+fs.mkdir(backupsDir, {
+  recursive: true
+}).catch(() => {});
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, backupsDir);
   },
   filename: (req, file, cb) => {
-    // Keep original name or append a timestamp
     const originalName = file.originalname;
     const ext = path.extname(originalName);
     const name = path.basename(originalName, ext);
@@ -121,34 +98,27 @@ const storage = multer.diskStorage({
     cb(null, `${name}-${timestamp}${ext}`);
   }
 });
-
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 500 * 1024 * 1024 // 500 MB max
+    fileSize: 500 * 1024 * 1024
   },
   fileFilter: (req, file, cb) => {
-    // Accept only .sql and .dump files
     if (file.originalname.endsWith('.sql') || file.originalname.endsWith('.dump')) {
       cb(null, true);
     } else {
-      cb(new Error('Seuls les fichiers .sql et .dump sont autorisés'));
+      cb(new Error('Only .sql and .dump files are allowed'));
     }
   }
 });
-
-// ───────────────────────────────────────────────
-// 🔧 Helper: extract database connection settings
-// ───────────────────────────────────────────────
 async function getDBConnectionParams() {
-  // Priority 1: DATABASE_URL (for Docker)
   if (process.env.DATABASE_URL) {
     try {
       const url = new URL(process.env.DATABASE_URL);
       return {
         host: url.hostname,
         port: url.port || '5432',
-        database: url.pathname.slice(1), // Strip leading slash
+        database: url.pathname.slice(1),
         user: url.username,
         password: url.password
       };
@@ -156,17 +126,12 @@ async function getDBConnectionParams() {
       console.error('Error parsing DATABASE_URL:', err);
     }
   }
-  
-  // Priority 2: settings from the database
   try {
-    const dbSettings = await pool.query(
-      `SELECT key, value, value_encrypted, value_iv, value_auth_tag FROM v_b_settings WHERE section = 'database'`
-    );
+    const dbSettings = await pool.query(`SELECT key, value, value_encrypted, value_iv, value_auth_tag FROM v_b_settings WHERE section = 'database'`);
     const settingsMap = {};
     dbSettings.rows.forEach(row => {
       settingsMap[row.key] = decryptSetting(row);
     });
-    
     if (settingsMap.db_host && settingsMap.db_name && settingsMap.db_user) {
       return {
         host: settingsMap.db_host,
@@ -179,8 +144,6 @@ async function getDBConnectionParams() {
   } catch (err) {
     console.error('Error reading settings:', err);
   }
-  
-  // Priority 3: environment variables
   return {
     host: process.env.DB_HOST || process.env.POSTGRES_HOST || 'localhost',
     port: process.env.DB_PORT || process.env.POSTGRES_PORT || '5432',
@@ -189,127 +152,94 @@ async function getDBConnectionParams() {
     password: process.env.DB_PASSWORD || process.env.POSTGRES_PASSWORD || ''
   };
 }
-
-// ───────────────────────────────────────────────
-// 🔧 GET /status — Maintenance status
-// ───────────────────────────────────────────────
 router.get('/status', async (req, res) => {
   try {
     const tableExists = await hasSystemTable();
     if (!tableExists) {
       return res.json(DEFAULT_MAINTENANCE_STATUS);
     }
-
     const systemColumns = await getSystemColumns();
     const messageColumn = resolveMaintenanceMessageColumn(systemColumns);
     const hasLegacySchema = systemColumns.has('key') || systemColumns.has('value_encrypted');
     const hasMonoLineSchema = !hasLegacySchema;
     let isEnabled = false;
-    let message = 'L\'application est actuellement en maintenance. Veuillez réessayer plus tard.';
+    let message = 'The application is currently under maintenance. Please try again later.';
     let tickerSpeed = 22;
     let tickerDirection = 'left';
     let tickerColor = '#d97706';
-
     if (hasMonoLineSchema) {
       if (!messageColumn) {
-        throw new Error('Colonne message de maintenance introuvable (maintenance_message).');
+        throw new Error('Maintenance message column not found (maintenance_message).');
       }
-      const result = await pool.query(
-        `SELECT maintenance_mode, ${messageColumn} AS maintenance_message, ticker_color, ticker_speed, ticker_direction
+      const result = await pool.query(`SELECT maintenance_mode, ${messageColumn} AS maintenance_message, ticker_color, ticker_speed, ticker_direction
          FROM v_b_settings_system
          WHERE id = 1
-         LIMIT 1`
-      );
+         LIMIT 1`);
       const row = result.rows[0];
       isEnabled = Boolean(row?.maintenance_mode);
       message = (row?.maintenance_message || '').trim() || message;
-      tickerSpeed = Number.isFinite(Number(row?.ticker_speed))
-        ? Math.max(5, Math.min(60, Number(row.ticker_speed)))
-        : 22;
+      tickerSpeed = Number.isFinite(Number(row?.ticker_speed)) ? Math.max(5, Math.min(60, Number(row.ticker_speed))) : 22;
       tickerDirection = row?.ticker_direction === 'right' ? 'right' : 'left';
-      tickerColor = /^#([0-9A-Fa-f]{6})$/.test(row?.ticker_color || '')
-        ? row.ticker_color
-        : '#d97706';
+      tickerColor = /^#([0-9A-Fa-f]{6})$/.test(row?.ticker_color || '') ? row.ticker_color : '#d97706';
     } else {
-      const modeResult = await pool.query(
-        `SELECT *
+      const modeResult = await pool.query(`SELECT *
          FROM v_b_settings_system
          WHERE key = 'MAINTENANCE_MODE'
-         LIMIT 1`
-      );
+         LIMIT 1`);
       if (modeResult.rows[0]) {
         isEnabled = decryptSetting(modeResult.rows[0]) === 'true';
       }
-
-      const msgResult = await pool.query(
-        `SELECT *
+      const msgResult = await pool.query(`SELECT *
          FROM v_b_settings_system
          WHERE key = 'MAINTENANCE_MESSAGE'
-         LIMIT 1`
-      );
+         LIMIT 1`);
       if (msgResult.rows[0]) {
         message = (decryptSetting(msgResult.rows[0]) || '').trim() || message;
       }
-
-      const speedResult = await pool.query(
-        `SELECT *
+      const speedResult = await pool.query(`SELECT *
          FROM v_b_settings_system
          WHERE key = 'MAINTENANCE_TICKER_SPEED'
-         LIMIT 1`
-      );
+         LIMIT 1`);
       if (speedResult.rows[0]) {
         const parsed = Number.parseInt(decryptSetting(speedResult.rows[0]), 10);
         if (Number.isFinite(parsed)) tickerSpeed = Math.max(5, Math.min(60, parsed));
       }
-
-      const directionResult = await pool.query(
-        `SELECT *
+      const directionResult = await pool.query(`SELECT *
          FROM v_b_settings_system
          WHERE key = 'MAINTENANCE_TICKER_DIRECTION'
-         LIMIT 1`
-      );
+         LIMIT 1`);
       if (directionResult.rows[0]) {
         tickerDirection = String(decryptSetting(directionResult.rows[0]) || '').toLowerCase() === 'right' ? 'right' : 'left';
       }
-
-      const colorResult = await pool.query(
-        `SELECT *
+      const colorResult = await pool.query(`SELECT *
          FROM v_b_settings_system
          WHERE key = 'MAINTENANCE_TICKER_COLOR'
-         LIMIT 1`
-      );
+         LIMIT 1`);
       if (colorResult.rows[0]) {
         const savedColor = String(decryptSetting(colorResult.rows[0]) || '').trim();
         if (/^#([0-9A-Fa-f]{6})$/.test(savedColor)) tickerColor = savedColor;
       }
     }
-    
     res.json({
       enabled: isEnabled,
-      maintenanceMode: isEnabled, // Backward compatibility
+      maintenanceMode: isEnabled,
       message: message,
       tickerSpeed,
       tickerDirection,
-      tickerColor,
+      tickerColor
     });
   } catch (err) {
     console.error('GET /maintenance/status error:', err);
     res.json(DEFAULT_MAINTENANCE_STATUS);
   }
 });
-
-// ───────────────────────────────────────────────
-// 🔧 POST /toggle — Enable/disable maintenance
-// ───────────────────────────────────────────────
 router.post('/toggle', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    // Accept both payload formats for backward compatibility
     const enable = req.body.enable !== undefined ? req.body.enable : req.body.enabled;
     const maintenanceMessage = req.body.maintenanceMessage || req.body.message;
     const rawTickerSpeed = req.body.tickerSpeed;
     const rawTickerDirection = req.body.tickerDirection;
     const rawTickerColor = req.body.tickerColor;
-    
     const systemColumns = await getSystemColumns();
     const messageColumn = resolveMaintenanceMessageColumn(systemColumns);
     const hasLegacySchema = systemColumns.has('key') || systemColumns.has('value_encrypted');
@@ -317,72 +247,33 @@ router.post('/toggle', verifyJWT, requireRole('admin'), async (req, res) => {
     const parsedSpeed = Number.parseInt(rawTickerSpeed, 10);
     const normalizedSpeed = Number.isFinite(parsedSpeed) ? Math.min(60, Math.max(5, parsedSpeed)) : 22;
     const normalizedDirection = String(rawTickerDirection).toLowerCase() === 'right' ? 'right' : 'left';
-    const normalizedColor = /^#([0-9A-Fa-f]{6})$/.test(String(rawTickerColor || '').trim())
-      ? String(rawTickerColor).trim()
-      : '#d97706';
-
+    const normalizedColor = /^#([0-9A-Fa-f]{6})$/.test(String(rawTickerColor || '').trim()) ? String(rawTickerColor).trim() : '#d97706';
     if (hasMonoLineSchema) {
       if (!messageColumn) {
-        throw new Error('Colonne message de maintenance introuvable (maintenance_message).');
+        throw new Error('Maintenance message column not found (maintenance_message).');
       }
       const hasCreatedAt = systemColumns.has('created_at');
       const hasUpdatedAt = systemColumns.has('updated_at');
-
-      const currentResult = await pool.query(
-        `SELECT maintenance_mode, ${messageColumn} AS maintenance_message, ticker_speed, ticker_direction, ticker_color
+      const currentResult = await pool.query(`SELECT maintenance_mode, ${messageColumn} AS maintenance_message, ticker_speed, ticker_direction, ticker_color
          FROM v_b_settings_system
          WHERE id = 1
-         LIMIT 1`
-      );
+         LIMIT 1`);
       const current = currentResult.rows[0] || {};
-
       const nextMode = Boolean(enable);
-      const nextMessage =
-        maintenanceMessage !== undefined
-          ? String(maintenanceMessage)
-          : (current.maintenance_message || 'L\'application est actuellement en maintenance. Veuillez réessayer plus tard.');
-      const nextSpeed =
-        rawTickerSpeed !== undefined
-          ? normalizedSpeed
-          : (Number.isFinite(Number(current.ticker_speed)) ? Math.min(60, Math.max(5, Number(current.ticker_speed))) : 22);
-      const nextDirection =
-        rawTickerDirection !== undefined
-          ? normalizedDirection
-          : (current.ticker_direction === 'right' ? 'right' : 'left');
-      const nextColor =
-        rawTickerColor !== undefined
-          ? normalizedColor
-          : (/^#([0-9A-Fa-f]{6})$/.test(current.ticker_color || '') ? current.ticker_color : '#d97706');
-
-      const updateClauses = [
-        'maintenance_mode = $1',
-        `${messageColumn} = $2`,
-        'ticker_color = $3',
-        'ticker_speed = $4',
-        'ticker_direction = $5',
-      ];
+      const nextMessage = maintenanceMessage !== undefined ? String(maintenanceMessage) : current.maintenance_message || 'The application is currently under maintenance. Please try again later.';
+      const nextSpeed = rawTickerSpeed !== undefined ? normalizedSpeed : Number.isFinite(Number(current.ticker_speed)) ? Math.min(60, Math.max(5, Number(current.ticker_speed))) : 22;
+      const nextDirection = rawTickerDirection !== undefined ? normalizedDirection : current.ticker_direction === 'right' ? 'right' : 'left';
+      const nextColor = rawTickerColor !== undefined ? normalizedColor : /^#([0-9A-Fa-f]{6})$/.test(current.ticker_color || '') ? current.ticker_color : '#d97706';
+      const updateClauses = ['maintenance_mode = $1', `${messageColumn} = $2`, 'ticker_color = $3', 'ticker_speed = $4', 'ticker_direction = $5'];
       if (hasUpdatedAt) {
         updateClauses.push('updated_at = NOW()');
       }
-
-      const updatedMono = await pool.query(
-        `UPDATE v_b_settings_system
+      const updatedMono = await pool.query(`UPDATE v_b_settings_system
          SET ${updateClauses.join(', ')}
-         WHERE id = 1`,
-        [nextMode, nextMessage, nextColor, nextSpeed, nextDirection]
-      );
-
+         WHERE id = 1`, [nextMode, nextMessage, nextColor, nextSpeed, nextDirection]);
       if (updatedMono.rowCount === 0) {
-        const insertColumns = [
-          'id',
-          'maintenance_mode',
-          messageColumn,
-          'ticker_color',
-          'ticker_speed',
-          'ticker_direction',
-        ];
+        const insertColumns = ['id', 'maintenance_mode', messageColumn, 'ticker_color', 'ticker_speed', 'ticker_direction'];
         const insertValues = ['1', '$1', '$2', '$3', '$4', '$5'];
-
         if (hasCreatedAt) {
           insertColumns.push('created_at');
           insertValues.push('NOW()');
@@ -391,37 +282,28 @@ router.post('/toggle', verifyJWT, requireRole('admin'), async (req, res) => {
           insertColumns.push('updated_at');
           insertValues.push('NOW()');
         }
-
-        await pool.query(
-          `INSERT INTO v_b_settings_system (${insertColumns.join(', ')})
-           VALUES (${insertValues.join(', ')})`,
-          [nextMode, nextMessage, nextColor, nextSpeed, nextDirection]
-        );
+        await pool.query(`INSERT INTO v_b_settings_system (${insertColumns.join(', ')})
+           VALUES (${insertValues.join(', ')})`, [nextMode, nextMessage, nextColor, nextSpeed, nextDirection]);
       }
     } else {
       await upsertLegacyEncryptedSetting('MAINTENANCE_MODE', enable ? 'true' : 'false');
-
       if (maintenanceMessage !== undefined) {
         await upsertLegacyEncryptedSetting('MAINTENANCE_MESSAGE', String(maintenanceMessage));
       }
-
       if (rawTickerSpeed !== undefined) {
         await upsertLegacyEncryptedSetting('MAINTENANCE_TICKER_SPEED', String(normalizedSpeed));
       }
-
       if (rawTickerDirection !== undefined) {
         await upsertLegacyEncryptedSetting('MAINTENANCE_TICKER_DIRECTION', normalizedDirection);
       }
-
       if (rawTickerColor !== undefined) {
         await upsertLegacyEncryptedSetting('MAINTENANCE_TICKER_COLOR', normalizedColor);
       }
     }
-    
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       enabled: enable,
-      maintenanceMode: enable // Backward compatibility
+      maintenanceMode: enable
     });
   } catch (err) {
     let currentDb = null;
@@ -439,35 +321,29 @@ router.post('/toggle', verifyJWT, requireRole('admin'), async (req, res) => {
       where: err?.where,
       constraint: err?.constraint,
       currentDb,
-      stack: err?.stack,
+      stack: err?.stack
     });
     res.status(500).json({
-      error: 'Erreur serveur: ' + err.message,
+      error: 'Server error: ' + err.message,
       code: err?.code || null,
       detail: err?.detail || null,
       hint: err?.hint || null,
       constraint: err?.constraint || null,
-      currentDb,
+      currentDb
     });
   }
 });
-
-// ───────────────────────────────────────────────
-// 💾 GET /backups — List backups
-// ───────────────────────────────────────────────
 router.get('/backups', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    
-    // Create folder if it does not exist
     try {
       await fs.access(backupsDir);
     } catch {
-      await fs.mkdir(backupsDir, { recursive: true });
+      await fs.mkdir(backupsDir, {
+        recursive: true
+      });
     }
-    
     const files = await fs.readdir(backupsDir);
     const backups = [];
-    
     for (const file of files) {
       if (file.endsWith('.sql') || file.endsWith('.dump')) {
         const filePath = path.join(backupsDir, file);
@@ -480,27 +356,22 @@ router.get('/backups', verifyJWT, requireRole('admin'), async (req, res) => {
         });
       }
     }
-    
-    // Sort by creation date (newest first)
     backups.sort((a, b) => b.created_at - a.created_at);
-    
     res.json(backups);
   } catch (err) {
-    res.status(500).json({ error: 'Erreur serveur' });
+    res.status(500).json({
+      error: 'Server error'
+    });
   }
 });
-
-// ───────────────────────────────────────────────
-// 📥 POST /backup/upload — Upload a backup
-// ───────────────────────────────────────────────
 router.post('/backup/upload', verifyJWT, requireRole('admin'), upload.single('backup'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'Aucun fichier fourni' });
+      return res.status(400).json({
+        error: 'No file provided'
+      });
     }
-    
     const stats = await fs.stat(req.file.path);
-    
     res.json({
       success: true,
       filename: req.file.filename,
@@ -509,78 +380,59 @@ router.post('/backup/upload', verifyJWT, requireRole('admin'), upload.single('ba
       created_at: stats.birthtime
     });
   } catch (err) {
-    // Delete file on error
     if (req.file) {
       try {
         await fs.unlink(req.file.path);
       } catch {}
     }
-    res.status(500).json({ error: 'Erreur lors de l\'upload: ' + err.message });
+    res.status(500).json({
+      error: 'Error during upload: ' + err.message
+    });
   }
 });
-
-// ───────────────────────────────────────────────
-// 💾 POST /backup — Create a backup
-// ───────────────────────────────────────────────
 router.post('/backup', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    // Ensure the backups folder exists
     try {
       await fs.access(backupsDir);
     } catch {
-      await fs.mkdir(backupsDir, { recursive: true });
+      await fs.mkdir(backupsDir, {
+        recursive: true
+      });
     }
-    
-    // Fetch database connection settings
     const dbParams = await getDBConnectionParams();
-    
     if (!dbParams.database || !dbParams.user) {
-      return res.status(400).json({ error: 'Paramètres de base de données manquants' });
+      return res.status(400).json({
+        error: 'Missing database settings'
+      });
     }
-    
-    // Generate filename with timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const filename = `backup-${timestamp}.sql`;
     const filepath = path.join(backupsDir, filename);
-    
-    // Check that pg_dump is available (test with --version, works on all OS)
     try {
       await assertPgTool('pg_dump');
     } catch {
-      return res.status(500).json({ 
-        error: 'pg_dump n\'est pas installé ou n\'est pas dans le PATH. Veuillez installer PostgreSQL client tools.' 
+      return res.status(500).json({
+        error: 'pg_dump is not installed or not in PATH. Please install PostgreSQL client tools.'
       });
     }
-    
-    // Create backup with pg_dump (format SQL plain)
-    const pgDumpArgs = [
-      '-h', dbParams.host,
-      '-p', String(dbParams.port),
-      '-U', dbParams.user,
-      '-d', dbParams.database,
-      '-F', 'p', // format plain SQL
-      '--clean',
-      '--if-exists',
-      '-f', filepath, // Output file
-    ];
-
-    const { stdout, stderr } = await runPgTool('pg_dump', pgDumpArgs, dbParams);
-    
-    // Check that the file exists and is not empty
+    const pgDumpArgs = ['-h', dbParams.host, '-p', String(dbParams.port), '-U', dbParams.user, '-d', dbParams.database, '-F', 'p', '--clean', '--if-exists', '-f', filepath];
+    const {
+      stdout,
+      stderr
+    } = await runPgTool('pg_dump', pgDumpArgs, dbParams);
     let stats;
     try {
       stats = await fs.stat(filepath);
       if (stats.size === 0) {
-        return res.status(500).json({ 
-          error: 'La sauvegarde a été créée mais le fichier est vide. Vérifiez les permissions et la connexion à la base de données.' 
+        return res.status(500).json({
+          error: 'Backup was created but the file is empty. Check permissions and database connection.'
         });
       }
     } catch (statErr) {
-      return res.status(500).json({ 
-        error: 'Le fichier de sauvegarde n\'a pas pu être créé: ' + statErr.message 
+      return res.status(500).json({
+        error: 'Backup file could not be created: ' + statErr.message
       });
     }
-    
     res.json({
       success: true,
       filename: filename,
@@ -589,92 +441,87 @@ router.post('/backup', verifyJWT, requireRole('admin'), async (req, res) => {
     });
   } catch (err) {
     console.error('Error creating backup:', err);
-    const errorMessage = err.stderr || err.message || 'Erreur inconnue';
-    res.status(500).json({ 
-      error: 'Erreur lors de la création de la sauvegarde: ' + errorMessage,
+    const errorMessage = err.stderr || err.message || 'Unknown error';
+    res.status(500).json({
+      error: 'Error creating backup: ' + errorMessage,
       details: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 });
-
-// ───────────────────────────────────────────────
-// 🗑️ DELETE /backup/:filename — Delete a backup
-// ───────────────────────────────────────────────
 router.delete('/backup/:filename', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    const { filename } = req.params;
-    
+    const {
+      filename
+    } = req.params;
     if (!filename) {
-      return res.status(400).json({ error: 'Nom de fichier requis' });
+      return res.status(400).json({
+        error: "Filename required"
+      });
     }
-    
-    // Sanitize filename to prevent path traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      return res.status(400).json({ error: 'Nom de fichier invalide' });
+      return res.status(400).json({
+        error: "Invalid filename"
+      });
     }
-    
     const filepath = path.join(backupsDir, filename);
-    
-    // Check that the file exists
     try {
       await fs.access(filepath);
     } catch {
-      return res.status(404).json({ error: 'Fichier de sauvegarde introuvable' });
+      return res.status(404).json({
+        error: "Backup file not found"
+      });
     }
-    
-    // Verify this is a backup file
     if (!filename.endsWith('.sql') && !filename.endsWith('.dump')) {
-      return res.status(400).json({ error: 'Type de fichier non autorisé' });
+      return res.status(400).json({
+        error: 'File type not allowed'
+      });
     }
-    
-    // Delete file
     await fs.unlink(filepath);
-    
-    res.json({ success: true, message: 'Sauvegarde supprimée avec succès' });
+    res.json({
+      success: true,
+      message: 'Backup deleted successfully'
+    });
   } catch (err) {
     console.error('Error deleting backup:', err);
-    res.status(500).json({ error: 'Erreur lors de la suppression: ' + err.message });
+    res.status(500).json({
+      error: 'Error during deletion: ' + err.message
+    });
   }
 });
-
-// ───────────────────────────────────────────────
-// 🔄 POST /restore — Restore a backup
-// ───────────────────────────────────────────────
 router.post('/restore', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    const { filename } = req.body;
-    
+    const {
+      filename
+    } = req.body;
     if (!filename) {
-      return res.status(400).json({ error: 'Nom de fichier requis' });
+      return res.status(400).json({
+        error: "Filename required"
+      });
     }
-    
-    // Sanitize filename to prevent path traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      return res.status(400).json({ error: 'Nom de fichier invalide' });
+      return res.status(400).json({
+        error: "Invalid filename"
+      });
     }
-    
     const filepath = path.join(backupsDir, filename);
-    
-    // Check that the file exists
     try {
       await fs.access(filepath);
     } catch {
-      return res.status(404).json({ error: 'Fichier de sauvegarde introuvable' });
+      return res.status(404).json({
+        error: "Backup file not found"
+      });
     }
-    
-    // Verify this is a backup file
     if (!filename.endsWith('.sql') && !filename.endsWith('.dump')) {
-      return res.status(400).json({ error: 'Type de fichier non autorisé' });
+      return res.status(400).json({
+        error: 'File type not allowed'
+      });
     }
-    
-    // Fetch database connection settings
     const dbParams = await getDBConnectionParams();
-    
     if (!dbParams.database || !dbParams.user) {
-      return res.status(400).json({ error: 'Paramètres de base de données manquants' });
+      return res.status(400).json({
+        error: 'Missing database settings'
+      });
     }
-    
-    // Terminate active connections to the database (optional; continue on error)
     try {
       await pool.query(`
         SELECT pg_terminate_backend(pid)
@@ -683,15 +530,10 @@ router.post('/restore', verifyJWT, requireRole('admin'), async (req, res) => {
       `, [dbParams.database]);
       console.log('Active connections terminated');
     } catch (err) {
-      // This is only a warning; continue anyway
       console.warn('Warning stopping connections:', err.message);
       console.warn('Restore will continue, but some connections may remain active');
     }
-    
-    // Determine the file format
     const isDump = filename.endsWith('.dump');
-    
-    // Ensure required tools are available
     try {
       if (isDump) {
         await assertPgTool('pg_restore');
@@ -700,165 +542,122 @@ router.post('/restore', verifyJWT, requireRole('admin'), async (req, res) => {
       }
     } catch {
       const toolName = isDump ? 'pg_restore' : 'psql';
-      return res.status(500).json({ 
-        error: `${toolName} n'est pas installé ou n'est pas dans le PATH. Veuillez installer PostgreSQL client tools.` 
+      return res.status(500).json({
+        error: `${toolName} is not installed or not in PATH. Please install PostgreSQL client tools.`
       });
     }
-    
-    // Build the restore command
     let restoreCommand;
     let restoreArgs;
     if (isDump) {
       restoreCommand = 'pg_restore';
-      restoreArgs = [
-        '-h', dbParams.host,
-        '-p', String(dbParams.port),
-        '-U', dbParams.user,
-        '-d', dbParams.database,
-        '--clean',
-        '--if-exists',
-        '--no-owner',
-        '--no-acl',
-        filepath,
-      ];
+      restoreArgs = ['-h', dbParams.host, '-p', String(dbParams.port), '-U', dbParams.user, '-d', dbParams.database, '--clean', '--if-exists', '--no-owner', '--no-acl', filepath];
     } else {
       restoreCommand = 'psql';
-      restoreArgs = [
-        '-h', dbParams.host,
-        '-p', String(dbParams.port),
-        '-U', dbParams.user,
-        '-d', dbParams.database,
-        '-f', filepath,
-      ];
+      restoreArgs = ['-h', dbParams.host, '-p', String(dbParams.port), '-U', dbParams.user, '-d', dbParams.database, '-f', filepath];
     }
-
-    // Run the restore command
     console.log(`Restore started: ${filename}`);
-    const { stdout, stderr } = await runPgTool(restoreCommand, restoreArgs, dbParams, {
-      maxBuffer: 50 * 1024 * 1024,
+    const {
+      stdout,
+      stderr
+    } = await runPgTool(restoreCommand, restoreArgs, dbParams, {
+      maxBuffer: 50 * 1024 * 1024
     });
-    
-    // Print output for debugging
     if (stdout) {
       console.log('Restore stdout:', stdout);
     }
     if (stderr && !stderr.includes('NOTICE')) {
-      // NOTICE messages are normal; do not treat them as errors
       console.warn('Restore warnings:', stderr);
     }
-    
     console.log(`Restore completed: ${filename}`);
-    res.json({ success: true, message: 'Sauvegarde restaurée avec succès' });
+    res.json({
+      success: true,
+      message: 'Backup restored successfully'
+    });
   } catch (err) {
     console.error('Error restore:', err);
-    const errorMessage = err.stderr || err.message || 'Erreur inconnue';
-    res.status(500).json({ 
-      error: 'Erreur lors de la restauration: ' + errorMessage,
+    const errorMessage = err.stderr || err.message || 'Unknown error';
+    res.status(500).json({
+      error: 'Error during restore: ' + errorMessage,
       details: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 });
-
-// ───────────────────────────────────────────────
-// 📥 GET /backup/plan — Fetch backup schedule
-// ───────────────────────────────────────────────
 router.get('/backup/plan', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    const scheduleResult = await pool.query(
-      `SELECT value, value_encrypted, value_iv, value_auth_tag FROM v_b_settings WHERE key = 'backup_schedule'`
-    );
-    const retentionResult = await pool.query(
-      `SELECT value, value_encrypted, value_iv, value_auth_tag FROM v_b_settings WHERE key = 'backup_retention_days'`
-    );
-    
-    const schedule = scheduleResult.rows[0] 
-      ? decryptSetting(scheduleResult.rows[0]) || '0 2 * * *'
-      : '0 2 * * *';
-    
-    const retention = retentionResult.rows[0]
-      ? parseInt(decryptSetting(retentionResult.rows[0]) || '14', 10)
-      : 14;
-    
+    const scheduleResult = await pool.query(`SELECT value, value_encrypted, value_iv, value_auth_tag FROM v_b_settings WHERE key = 'backup_schedule'`);
+    const retentionResult = await pool.query(`SELECT value, value_encrypted, value_iv, value_auth_tag FROM v_b_settings WHERE key = 'backup_retention_days'`);
+    const schedule = scheduleResult.rows[0] ? decryptSetting(scheduleResult.rows[0]) || '0 2 * * *' : '0 2 * * *';
+    const retention = retentionResult.rows[0] ? parseInt(decryptSetting(retentionResult.rows[0]) || '14', 10) : 14;
     res.json({
       schedule: schedule,
       retention_days: retention
     });
   } catch (err) {
-    res.status(500).json({ error: 'Erreur serveur' });
+    res.status(500).json({
+      error: 'Server error'
+    });
   }
 });
-
-// ───────────────────────────────────────────────
-// 💾 POST /backup/plan — Save backup schedule
-// ───────────────────────────────────────────────
 router.post('/backup/plan', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
-    const { schedule, retention_days } = req.body;
-    
-    await pool.query(
-      `INSERT INTO v_b_settings (section, key, value) 
+    const {
+      schedule,
+      retention_days
+    } = req.body;
+    await pool.query(`INSERT INTO v_b_settings (section, key, value) 
        VALUES ('maintenance', 'backup_schedule', $1)
-       ON CONFLICT (section, key) DO UPDATE SET value = $1`,
-      [schedule || '0 2 * * *']
-    );
-    
-    await pool.query(
-      `INSERT INTO v_b_settings (section, key, value) 
+       ON CONFLICT (section, key) DO UPDATE SET value = $1`, [schedule || '0 2 * * *']);
+    await pool.query(`INSERT INTO v_b_settings (section, key, value) 
        VALUES ('maintenance', 'backup_retention_days', $1)
-       ON CONFLICT (section, key) DO UPDATE SET value = $1`,
-      [String(retention_days || 14)]
-    );
-    
-    res.json({ success: true });
+       ON CONFLICT (section, key) DO UPDATE SET value = $1`, [String(retention_days || 14)]);
+    res.json({
+      success: true
+    });
   } catch (err) {
-    res.status(500).json({ error: 'Erreur serveur' });
+    res.status(500).json({
+      error: 'Server error'
+    });
   }
 });
-
-// ───────────────────────────────────────────────
-// 🚀 POST /deploy — Run deployment script
-// ───────────────────────────────────────────────
 router.post('/deploy', verifyJWT, requireRole('admin'), async (req, res) => {
   try {
     const deployScript = String(process.env.DEPLOY_SCRIPT_PATH || '').trim();
     if (!deployScript) {
       return res.status(501).json({
-        error: 'Déploiement non configuré. Définissez DEPLOY_SCRIPT_PATH (chemin absolu vers le script).',
+        error: 'Deployment not configured. Set DEPLOY_SCRIPT_PATH (absolute path to the script).'
       });
     }
-
     console.log('Running deploy script...');
-
-    const { stdout, stderr } = await execFileAsync(deployScript, [], {
+    const {
+      stdout,
+      stderr
+    } = await execFileAsync(deployScript, [], {
       timeout: 300000,
       maxBuffer: 10 * 1024 * 1024,
-      windowsHide: true,
+      windowsHide: true
     });
-    
     if (stderr && !stderr.includes('WARNING')) {
-      console.error('Error déploiement:', stderr);
-      return res.status(500).json({ 
-        error: 'Erreur lors du déploiement', 
+      console.error('Deployment error:', stderr);
+      return res.status(500).json({
+        error: 'Error during deployment',
         details: stderr,
-        output: stdout 
+        output: stdout
       });
     }
-    
     console.log('Deploy completed');
-    res.json({ 
-      success: true, 
-      message: 'Déploiement terminé avec succès',
+    res.json({
+      success: true,
+      message: 'Deployment completed successfully',
       output: stdout,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
     console.error('Error running deploy script:', err);
-    res.status(500).json({ 
-      error: 'Erreur lors du déploiement', 
+    res.status(500).json({
+      error: 'Error during deployment',
       details: err.message,
       code: err.code
     });
   }
 });
-
 export default router;

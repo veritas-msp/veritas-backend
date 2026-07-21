@@ -5,4 +5,4 @@ ALTER TABLE v_b_users_profiles
 
 UPDATE v_b_users_profiles
 SET documents_enabled = TRUE
-WHERE name IN ('Administrateur', 'Superviseur', 'Agent', 'Collaborateur');
+WHERE name IN ('Administrateur', 'Superviseur', 'Agent', 'Collaborateur', 'Administrator', 'Supervisor', 'Collaborator', 'Super Admin');

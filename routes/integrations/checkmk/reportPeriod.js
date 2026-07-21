@@ -1,64 +1,49 @@
-// ───────────────────────────────────────────────
-// 📊 Dedicated monitoring report route: events/notifications and availability
-//     for the report period only (without changing EquipmentDetailPage calls).
-// ───────────────────────────────────────────────
-
 import express from 'express';
 import fetch from 'node-fetch';
 import verifyJWT from '../../../middleware/auth.js';
-import {
-  getCheckMKSettings,
-  authenticateCheckMK,
-  computeCheckMKLogtimeFromDays,
-  filterCheckMKEventsByPeriod,
-  parseCheckMKEventTime,
-} from './utils.js';
-
+import { getCheckMKSettings, authenticateCheckMK, computeCheckMKLogtimeFromDays, filterCheckMKEventsByPeriod, parseCheckMKEventTime } from './utils.js';
 const router = express.Router();
-
-/**
- * GET /api/checkmk/report-period/:hostName
- * Query: start_time (ISO), end_time (ISO), site (optional)
- * Returns { events, availability } for the specified report period.
- */
 router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
   try {
-    const { hostName } = req.params;
-    const { start_time, end_time, site } = req.query;
-
+    const {
+      hostName
+    } = req.params;
+    const {
+      start_time,
+      end_time,
+      site
+    } = req.query;
     if (!start_time || !end_time) {
       return res.status(400).json({
-        error: 'Paramètres manquants: start_time et end_time sont requis pour la période du rapport.'
+        error: 'Missing parameters: start_time and end_time are required for the report period.'
       });
     }
-
     const settings = await getCheckMKSettings();
     if (!settings || !settings.apiUrl || !settings.username || !settings.password) {
       return res.status(500).json({
-        error: 'Configuration Check MK incomplète. Veuillez configurer les paramètres dans Settings.'
+        error: 'Check MK configuration incomplete. Please configure settings in Settings.'
       });
     }
-
     let baseUrl = settings.apiUrl;
     baseUrl = baseUrl.replace(/\/check_mk\/api\/1\.0\/?$/, '');
     baseUrl = baseUrl.replace(/\/check_mk\/api\/?$/, '');
     baseUrl = baseUrl.replace(/\/api\/?$/, '');
     baseUrl = baseUrl.replace(/\/+$/, '');
-
     const checkmkSite = site || settings.site || '';
-    const authData = await authenticateCheckMK(
-      settings.apiUrl,
-      settings.username,
-      settings.password
-    );
-
+    const authData = await authenticateCheckMK(settings.apiUrl, settings.username, settings.password);
     const startDate = new Date(start_time);
     const endDate = new Date(end_time);
     const logtimeFromDays = computeCheckMKLogtimeFromDays(start_time, end_time);
     const viewUrl = `${baseUrl}/check_mk/view.py`;
-
-    // ─── 1) Events / notifications (hostnotifications view, period in days)
-    let eventsResult = { host_name: hostName, events_count: 0, events: [], period: { start_time, end_time } };
+    let eventsResult = {
+      host_name: hostName,
+      events_count: 0,
+      events: [],
+      period: {
+        start_time,
+        end_time
+      }
+    };
     try {
       const eventParams = new URLSearchParams({
         host: hostName,
@@ -68,12 +53,13 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
         view_name: 'hostnotifications'
       });
       if (checkmkSite) eventParams.append('site', checkmkSite);
-
       const eventRes = await fetch(`${viewUrl}?${eventParams.toString()}`, {
         method: 'GET',
-        headers: { 'Accept': 'application/json', 'Authorization': authData.auth_header }
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': authData.auth_header
+        }
       });
-
       if (eventRes.ok) {
         const contentType = eventRes.headers.get('content-type');
         let data;
@@ -86,7 +72,6 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
             data = [];
           }
         }
-
         let allEvents = [];
         if (Array.isArray(data)) {
           allEvents = data.length > 0 && Array.isArray(data[0]) ? data.slice(1) : data;
@@ -104,20 +89,17 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
             }
           }
         }
-
         const normalizedEvents = allEvents.map((event, index) => {
           if (Array.isArray(event)) {
             const rawState = event[5];
             let stateNum = 0;
-            if (typeof rawState === 'number') stateNum = rawState;
-            else if (typeof rawState === 'string') {
+            if (typeof rawState === 'number') stateNum = rawState;else if (typeof rawState === 'string') {
               const m = rawState.match(/\((OK|WARNING|CRITICAL|UNKNOWN)\)/i) || rawState.match(/(OK|WARNING|CRITICAL|UNKNOWN)/i);
               if (m) {
                 const t = m[1].toUpperCase();
                 stateNum = t === 'OK' ? 0 : t === 'WARNING' ? 1 : t === 'CRITICAL' ? 2 : 3;
               }
             }
-            // Several Check MK views (hostnotifications, hostsvcevents, etc.) use different column orders
             const serviceVal = event[4] ?? event[3] ?? null;
             const messageVal = event[6] ?? event[5] ?? event[7] ?? null;
             const timeRaw = event[1];
@@ -130,10 +112,9 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
                 timeVal = Math.floor(parsed / 1000);
               }
             }
-            const timestamp =
-              timeVal != null
-                ? new Date(timeVal * 1000).toISOString()
-                : parseCheckMKEventTime({ time: timeRaw })?.toISOString() ?? null;
+            const timestamp = timeVal != null ? new Date(timeVal * 1000).toISOString() : parseCheckMKEventTime({
+              time: timeRaw
+            })?.toISOString() ?? null;
             return {
               id: index,
               icon: event[0] || null,
@@ -156,12 +137,7 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
           } else if (typeof timeVal === 'number' && timeVal > 10000000000) {
             timeVal = Math.floor(timeVal / 1000);
           }
-          const timestamp =
-            timeVal != null
-              ? typeof timeVal === 'number'
-                ? new Date(timeVal * 1000).toISOString()
-                : String(timeVal)
-              : parseCheckMKEventTime(event)?.toISOString() ?? null;
+          const timestamp = timeVal != null ? typeof timeVal === 'number' ? new Date(timeVal * 1000).toISOString() : String(timeVal) : parseCheckMKEventTime(event)?.toISOString() ?? null;
           return {
             id: index,
             icon: event.icon || event.log_icon || null,
@@ -176,26 +152,24 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
             plugin_output: event.plugin_output || event.log_plugin_output || null
           };
         });
-
-        const periodEvents = filterCheckMKEventsByPeriod(
-          normalizedEvents,
-          start_time,
-          end_time
-        );
-
+        const periodEvents = filterCheckMKEventsByPeriod(normalizedEvents, start_time, end_time);
         eventsResult = {
           host_name: hostName,
           events_count: periodEvents.length,
           events: periodEvents,
-          period: { start_time, end_time }
+          period: {
+            start_time,
+            end_time
+          }
         };
       }
     } catch (e) {
       console.error('[checkmk report-period] events:', e.message);
     }
-
-    // ─── 2) Availability for the period (av_from / av_to as Unix timestamps when supported by the view)
-    let availabilityResult = { host_name: hostName, availability: null };
+    let availabilityResult = {
+      host_name: hostName,
+      availability: null
+    };
     try {
       const avParams = new URLSearchParams({
         host: hostName,
@@ -208,18 +182,18 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
       const avTo = Math.floor(endDate.getTime() / 1000);
       avParams.append('av_from', String(avFrom));
       avParams.append('av_to', String(avTo));
-
       const avRes = await fetch(`${viewUrl}?${avParams.toString()}`, {
         method: 'GET',
-        headers: { 'Accept': 'application/json', 'Authorization': authData.auth_header }
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': authData.auth_header
+        }
       });
-
       if (avRes.ok) {
         const html = await avRes.text();
         let availabilityData = null;
         const hostPattern = new RegExp(`<tr[^>]*class="data[^"]*"[^>]*>.*?<td[^>]*>.*?<a[^>]*>${hostName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</a>.*?</td>(.*?)</tr>`, 'is');
         const match = html.match(hostPattern);
-
         if (match && match[1]) {
           const spanPattern = /<span[^>]*>([0-9.]+)%<\/span>/g;
           const values = [];
@@ -236,7 +210,6 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
             };
           }
         }
-
         if (!availabilityData) {
           const allRowsPattern = /<tr[^>]*class="data[^"]*"[^>]*>(.*?)<\/tr>/gs;
           let rowMatch;
@@ -261,16 +234,20 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
             }
           }
         }
-
-        availabilityResult = { host_name: hostName, availability: availabilityData };
+        availabilityResult = {
+          host_name: hostName,
+          availability: availabilityData
+        };
       }
     } catch (e) {
       console.error('[checkmk report-period] availability:', e.message);
     }
-
     return res.json({
       host_name: hostName,
-      period: { start_time, end_time },
+      period: {
+        start_time,
+        end_time
+      },
       events: eventsResult,
       availability: availabilityResult
     });
@@ -278,10 +255,16 @@ router.get('/report-period/:hostName', verifyJWT, async (req, res) => {
     res.status(500).json({
       host_name: req.params.hostName,
       error: error.message,
-      events: { host_name: req.params.hostName, events_count: 0, events: [] },
-      availability: { host_name: req.params.hostName, availability: null }
+      events: {
+        host_name: req.params.hostName,
+        events_count: 0,
+        events: []
+      },
+      availability: {
+        host_name: req.params.hostName,
+        availability: null
+      }
     });
   }
 });
-
 export default router;
